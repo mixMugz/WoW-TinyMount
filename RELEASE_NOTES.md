@@ -1,5 +1,79 @@
 # Release Notes
 
+## 1.3.0 — Quiet
+
+A macro line that fails says so out loud — red text across the screen and, for
+most players, a voice line over it. It costs nothing else: a failed line stops
+nothing below it, so the rest of the macro runs either way. What is left is the
+noise, and now there is a way to turn it off for one line.
+
+* **`/tmq`.** Put it above a line whose failure you already understand, and the
+  client keeps that failure to itself. Both halves go — the text and the spoken
+  error — for a fraction of a second, and everything comes back on its own.
+
+  ```
+  #showtooltip Divine Steed
+  /tmq
+  /use item:140309
+  /cast Divine Steed
+  ```
+
+  The toy rides off the global cooldown, so the spell casts whether or not the
+  toy was ready. On the presses where it was not, nothing is said about it.
+* **One command, not a pair.** A closing one would be read in the same frame as
+  the opening one, while the error turns up later, off the event queue — so it
+  would shut the window before there was anything to catch. Worse, an edit that
+  removed the closing line would leave the client muted until the next reload.
+  A window that closes itself has neither failure.
+* The text is dropped before it is drawn rather than cleared afterwards, which
+  is why nothing flickers. Clearing shows the message for a frame first.
+* The spoken error has no per-message switch in the client, only a setting, so
+  it is turned off and put back to **whatever it was**. Error speech you had
+  already turned off stays off.
+* You do not need it above a `/click` extra — those hold themselves back
+  silently to begin with. `/tmq` is for the ordinary `/use` and `/cast` lines
+  TinyMount has nothing to do with.
+
+* A reload inside that fraction of a second used to leave the setting switched
+  off until the next `/tmq`, because the timer that would have put it back went
+  with the reload. It is now restored on the way out as well.
+
+**A spell extra now carries its id rather than its name.** It used to be
+resolved to a name first, which meant it could not be armed at all until the
+client had that spell in its cache — so a spell extra could quietly fail to
+exist for the first seconds of a session, and there was nothing to see when it
+did. A secure button takes the id directly. Names were the ambiguous half
+anyway: ranks, overridden spells and two spells sharing a name all resolve to
+something, just not always the something you meant.
+
+**An extra that was taken out of a macro went on firing.** The hidden button is
+a frame, and nothing in the client destroys a frame — so a name that had once
+worked kept working for the rest of the session, out of any other macro that
+still spelled it, long after you had edited the line away. Editing a macro now
+empties every button and lets the macros fill back in the ones they still ask
+for. The frame is still there; it just does nothing, which from the outside is
+the same thing.
+
+**A toy extra that would not arm on a fresh character.** `C_ToyBox.IsToyUsable`
+answers nothing at all until the client has filled the toy box in, and an
+unanswered question disarms the button — by design, since a silent press is
+cheaper than a red line. But nothing here was listening for the moment the
+answer arrived, so on a character who had not opened the collection the extra
+could stay quiet indefinitely and look broken. It now listens for
+`TOYS_UPDATED`, and asks the client to fill the box at login rather than waiting
+to be told.
+
+**Two corrections to what was written here before.** A failed macro line does
+**not** stop the client reading the lines below it — only `/stopmacro` and a
+condition matching nothing end a macro early. The old wording claimed an extra
+on cooldown would cost you the mount as well; it never did, it only made noise.
+And the README now says plainly where an extra's button comes from: TinyMount
+learns the name while repainting a slot, so it only ever reads macros that are
+on a bar and carry a `/mnt` line. Copy a `/click` line into a macro that has
+never met one, and it does nothing at all — silently, because clicking a button
+that does not exist is not an error. That surprise has cost more than one
+evening.
+
 ## 1.2.1 — Icon
 
 * The addon list shows TinyMount's own icon instead of the default placeholder.

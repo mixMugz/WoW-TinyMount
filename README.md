@@ -187,6 +187,39 @@ are hard:
   answer, and adds a proc glow for good measure — the live icon simply stops
   working. `/click` resolves to nothing, so the slot stays ours.
 
+### Where the button comes from
+
+Worth reading before you copy a `/click` line somewhere else, because this is
+the one thing about extras that surprises people.
+
+TinyMount learns a name while it is **repainting a slot**. So it only ever sees
+one that is written in a macro which is *on a bar* and carries a `/mnt` line —
+those are the only macros it has any reason to read.
+
+The button it then builds is a frame, and a frame's name is global. Once it
+exists, **any** macro can click it: with no `/mnt` line, on any bar, out of any
+macro at all. But something has to create it first, and only a mount macro on a
+bar does that.
+
+Which is why this does nothing whatsoever:
+
+```
+/use Healthstone
+/click tmt140309
+```
+
+— if `tmt140309` has never appeared in a mount macro on a bar. Clicking a button
+that does not exist is not an error, so there is nothing to see: no red line, no
+sound, no hint that the line was ever read. Put the name in your mount macro
+once and press it, and the same name starts working everywhere.
+
+The frame itself lives until you log out, because nothing in the client destroys
+a frame. It stops *firing*, though, the moment the name is gone from every macro
+TinyMount reads: editing any macro empties every button, and the macros fill
+back in only the names they still spell. So taking a `/click` line out does what
+you would expect it to, even though the frame behind it stays where it is,
+doing nothing.
+
 ### When the extra stays quiet
 
 It is held back in four states, and in all four it is held back silently — no
@@ -208,9 +241,13 @@ Mounted and in combat are macro conditionals under the hood, so the client
 enforces them itself and goes on doing it through a fight. The rest have no
 conditional behind them and are applied by TinyMount out of combat, which is the
 only place they matter — in a fight the conditional has already emptied the
-button. Anything TinyMount cannot answer counts as held back: a press that
-quietly does nothing costs you one press, while an extra that draws an error
-stops the client reading the macro there and costs you the mount as well.
+button. Anything TinyMount cannot answer counts as held back, and a press that
+quietly does nothing is the cheap outcome.
+
+The macro itself is never at risk. A line that fails stops nothing below it —
+only `/stopmacro` and a condition matching nothing end a macro early — so the
+mount comes out either way. What an unheld extra costs is the noise, and for
+the lines TinyMount does not manage there is [`/tmq`](#silencing-a-line).
 
 ### One macro, several characters
 
@@ -235,6 +272,41 @@ to be things that ride off it.
 
 Extras fire whether or not the mount does, and they fire first, in the order
 they are written. If you need one without the other, use two keys.
+
+## Silencing a line
+
+`/tmq` mutes the client's complaint about the line under it — the red text and
+the spoken one both — and turns everything back on by itself a fraction of a
+second later.
+
+```
+#showtooltip Divine Steed
+/tmq
+/use item:140309
+/cast Divine Steed
+```
+
+The toy is off the global cooldown, so both lines go off. On the presses where
+it is still on cooldown you simply hear nothing about it, and the spell casts as
+usual.
+
+**One command, and no closing one.** `/tmq` covers the frame it is read in,
+which is the frame the error turns up in. There is nothing to switch back on
+afterwards — and so nothing that stays muted if you later edit the line away.
+
+Worth knowing:
+
+* it silences **everything** for that fraction of a second, not only cooldown
+  errors. You asked for it by hand, on a line whose failure you already
+  understand
+* the spoken error is a client setting with no per-message switch, so TinyMount
+  turns it off and puts it back to **whatever it was**. If you had error speech
+  off already, it stays off
+* it changes nothing about what the macro does. A line that fails still fails,
+  it just does so without an audience
+* you do not need it above a `/click` extra — those hold themselves back
+  silently to begin with. `/tmq` is for the ordinary `/use` and `/cast` lines
+  TinyMount has nothing to do with
 
 ## Shorthand
 

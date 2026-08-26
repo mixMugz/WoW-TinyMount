@@ -43,6 +43,11 @@
 -- line. It has to be spelled that way rather than as a /use; see the Effect
 -- section for both reasons.
 --
+-- For the lines this addon has nothing to do with -- a plain /use or /cast that
+-- is going to fail -- /tmq mutes the client's complaint about the line under
+-- it, text and voice both, for a fraction of a second, and puts everything back
+-- on its own. See the Silence section.
+--
 -- A shapeshifted player needs one more line, and it cannot be helped from here.
 -- SummonByID is not protected, but half of it quietly is: the client cancels
 -- the caster's form for its own mount journal, which calls exactly the same
@@ -202,6 +207,90 @@ SlashCmdList["TINYMOUNT"] = function(msg)
 end
 
 --------------------------------------------------------------------------------
+-- Silence
+--------------------------------------------------------------------------------
+
+-- A macro line that is going to fail draws the client's own complaint: text in
+-- UIErrorsFrame and, for most players, a voice line on top of it. The line
+-- costs nothing else -- a failure stops nothing below it, only /stopmacro and a
+-- condition that matches nothing end a macro early -- so what is left to object
+-- to is the noise, and /tmq is how a macro says it does not want to hear it.
+--
+--   /tmq
+--   /use item:140309
+--   /cast <spell>
+--
+-- The toy is off the global cooldown and the spell below it goes off either
+-- way; on the press where the toy is not ready, nothing is said about it.
+--
+-- One command and not a pair. A closing one on the next line would be read in
+-- the same frame the opening one was, while UI_ERROR_MESSAGE arrives later, off
+-- the event queue -- so the window would already be shut by the time the error
+-- turned up. And a missing closing line, left behind by an edit, would mute the
+-- client until the next reload. A window that closes itself has neither
+-- failure, and needs nothing written after the line it covers.
+--
+-- Two halves, because the client keeps them apart:
+--
+--   * the text goes through UIErrorsFrame:AddMessage, so it can be dropped
+--     before it is ever drawn -- the frame never sees it and nothing flickers.
+--     Clearing the frame afterwards is the other way round: the message is
+--     already on screen and shows for a frame before it goes, which is exactly
+--     what it looks like.
+--
+--   * the voice has no per-message switch at all. Only the cvar, held down for
+--     a fraction of a second and put back to whatever it was, so a player who
+--     had turned it off keeps it off.
+local SILENCE_WINDOW = 0.3
+
+-- The namespaced pair rather than the bare globals: those are deprecated
+-- aliases, and they have been going away a function at a time for several
+-- expansions now.
+local GetCVar, SetCVar = C_CVar.GetCVar, C_CVar.SetCVar
+
+local silenceUntil, savedSpeech = 0, nil
+
+local function RestoreSpeech()
+  -- a second /tmq inside the window pushed the end back; come back then
+  if GetTime() < silenceUntil then
+    C_Timer.After(silenceUntil - GetTime(), RestoreSpeech)
+    return
+  end
+  if savedSpeech then
+    SetCVar("Sound_EnableErrorSpeech", savedSpeech)
+    savedSpeech = nil
+  end
+end
+
+SLASH_TINYMOUNTQUIET1 = "/tmq"
+SlashCmdList["TINYMOUNTQUIET"] = function()
+  if not savedSpeech then
+    savedSpeech = GetCVar("Sound_EnableErrorSpeech")
+    SetCVar("Sound_EnableErrorSpeech", "0")
+    C_Timer.After(SILENCE_WINDOW, RestoreSpeech)
+  end
+  silenceUntil = GetTime() + SILENCE_WINDOW
+end
+
+-- A reload inside the window would take the timer with it and leave the setting
+-- switched off until the next /tmq, so it is put back on the way out as well.
+-- The event fires for a reload and a logout alike, and both are early enough:
+-- cvars are written after it.
+local logoutFrame = CreateFrame("Frame")
+logoutFrame:RegisterEvent("PLAYER_LOGOUT")
+logoutFrame:SetScript("OnEvent", function()
+  if savedSpeech then SetCVar("Sound_EnableErrorSpeech", savedSpeech) end
+end)
+
+-- Everything inside the window goes, not only cooldowns: the line was written
+-- by hand, so the silence was asked for on purpose and for a known reason.
+local OrigAddMessage = UIErrorsFrame.AddMessage
+UIErrorsFrame.AddMessage = function(self, msg, ...)
+  if GetTime() < silenceUntil then return end
+  return OrigAddMessage(self, msg, ...)
+end
+
+--------------------------------------------------------------------------------
 -- Effect
 --------------------------------------------------------------------------------
 
@@ -244,18 +333,20 @@ local function ParseEffect(name)
   return letter and EFFECT_KIND[letter], id
 end
 
--- Attribute value per kind, or nil while the id cannot be turned into one yet.
+-- Attribute value per kind. Two of the three handlers pass the digits straight
+-- through: the toy handler tonumber()s what it is given, and the spell one
+-- takes an id as readily as a name -- measured in game.
+--
+-- The spell handler used to resolve the id to a name first, on the belief that
+-- it ended up in CastSpellByName and that an id would arrive there as a spell
+-- nobody has. It does not, and the resolving cost more than it bought: a name
+-- is ambiguous where an id never is (ranks, overrides, two spells sharing a
+-- name), and it could not be produced at all until the client had the spell in
+-- its cache -- which is why a spell extra could quietly fail to exist for the
+-- first seconds of a session.
 local EFFECT_ATTR = {
-  -- the toy handler tonumber()s what it gets, so the digits may stand as they are
   toy   = function(id) return id end,
-  -- the spell handler does not: it ends up in CastSpellByName, which wants a
-  -- name. An id arrives there as a spell nobody has, and casts nothing at all --
-  -- no error, the same silence a missing button gives. Resolved here rather than
-  -- written into the macro so that ids stay the one thing a macro ever names.
-  spell = function(id)
-    local info = C_Spell.GetSpellInfo(tonumber(id))
-    return info and info.name
-  end,
+  spell = function(id) return id end,
   -- a bare number would be read as an inventory slot -- /use 13 is a trinket
   item  = function(id) return "item:" .. id end,
 }
@@ -341,12 +432,12 @@ end
 -- it goes on working through a lockdown when SetAttribute cannot.
 --
 -- Every unanswered question disarms, and that is the whole safety margin here.
--- An extra that draws an error does not merely make a noise: the client stops
--- reading the macro at the line that failed, so a toy on cooldown would take the
--- /mnt line below it down with it and cost you the mount. The extras cannot be
--- moved below the mount to get out of the way either -- using one mid-summon
--- cancels the cast. So a press that quietly does nothing is the cheap outcome
--- and an error is the expensive one, and every guess is resolved that way.
+-- What it buys is silence, and only silence: a line that fails stops nothing
+-- below it, so a toy on cooldown costs the noise of the complaint and not the
+-- mount. Measured, and worth writing down, because the opposite is easy to
+-- assume -- only /stopmacro and a condition that matches nothing end a macro
+-- early. The extras are still kept above the mount rather than below it, for a
+-- different reason: using one mid-summon cancels the cast.
 local function ArmEffect(name)
   local btn = effects[name]
   if not btn or InCombatLockdown() then return end
@@ -365,14 +456,8 @@ end
 local function EnsureEffect(name)
   if effects[name] or InCombatLockdown() then return end
 
-  local kind, id = ParseEffect(name)
-  local attr = kind and EFFECT_ATTR[kind]
-  if not attr then return end
-
-  -- A spell the cache has not seen yet resolves to nothing. Returning without
-  -- filling effects[name] leaves the next Restyle to try again, which is the
-  -- same retry the combat check above rides on.
-  if not attr(id) then return end
+  local kind = ParseEffect(name)
+  if not kind then return end
 
   local btn = CreateFrame("Button", name, nil, "SecureActionButtonTemplate")
   btn:Hide()
@@ -483,10 +568,16 @@ local function Restyle(btn)
   local macroID, args = MacroOf(btn)
   if not args then return end
 
-  -- asked for again every time: the first attempt may have fallen in combat
-  for _, name in ipairs(macroEffect[macroID] or {}) do
-    EnsureEffect(name)
-    ArmEffect(name)
+  -- asked for again every time: the first attempt may have fallen in combat.
+  -- Read out of the table rather than defaulted to an empty one -- this runs
+  -- for every watched button on every modifier press, and a macro without an
+  -- extra is the common case.
+  local names = macroEffect[macroID]
+  if names then
+    for _, name in ipairs(names) do
+      EnsureEffect(name)
+      ArmEffect(name)
+    end
   end
 
   local exit = ExitAction()
@@ -561,11 +652,33 @@ f:RegisterEvent("SPELL_UPDATE_COOLDOWN")
 f:RegisterEvent("BAG_UPDATE_COOLDOWN")
 -- an item extra runs out, or the last one is picked back up
 f:RegisterEvent("BAG_UPDATE_DELAYED")
+-- C_ToyBox.IsToyUsable answers nil until the client has filled the toy box in,
+-- and an unanswered question disarms. Nothing else here announces the moment it
+-- becomes answerable, which on a freshly logged-in character is some way after
+-- PLAYER_ENTERING_WORLD -- long enough to look like a toy extra that simply
+-- does not work.
+f:RegisterEvent("TOYS_UPDATED")
 
 f:SetScript("OnEvent", function(self, event)
   if event == "UPDATE_MACROS" then
     wipe(macroArgs)
     wipe(macroEffect)
+
+    -- Every button is emptied here and filled back in by the Restyle pass at
+    -- the bottom, which reads the macros afresh. A name edited out of every
+    -- macro is simply never filled back in: the frame cannot be destroyed --
+    -- nothing in the client destroys a frame -- but it can be left doing
+    -- nothing, which is the same thing from the outside.
+    --
+    -- In combat this is skipped rather than deferred. SetAttribute is barred
+    -- there, and a macro edited mid-fight is rare enough that the next edit
+    -- out of combat can pick it up.
+    if not InCombatLockdown() then
+      for name, btn in pairs(effects) do
+        local kind = ParseEffect(name)
+        if kind then btn:SetAttribute(kind, nil) end
+      end
+    end
   end
 
   if event == "PLAYER_LOGIN" then
@@ -575,6 +688,15 @@ f:SetScript("OnEvent", function(self, event)
     hooksecurefunc(ActionBarButtonEventsFrame, "RegisterFrame", function(_, btn)
       Attach(btn)
     end)
+
+    -- Asks the client to fill the toy box in now rather than whenever someone
+    -- happens to open the collection; it answers with TOYS_UPDATED. Guarded
+    -- because it is not in every build -- and it is only ever an optimisation:
+    -- TOYS_UPDATED arrives on its own once the client gets round to it, which
+    -- is what actually arms a toy extra.
+    if C_ToyBox.ForceToyBoxUpdate then
+      C_ToyBox.ForceToyBoxUpdate()
+    end
 
     -- Bartender4 and anything else on LibActionButton-1.0. Asked for at login
     -- rather than on file load, because the library may load after us.
