@@ -3,9 +3,10 @@
 -- action bar slot holding such a macro with the icon of the mount the currently
 -- held modifiers select.
 --
--- The point is macro length. A macro is capped at 255 *bytes* and Cyrillic
--- spends two per letter, so a /cast list of six localised mount names does not
--- fit. Numeric ids do, with room to spare.
+-- The point is macro length. A macro is capped at 255 characters and localised
+-- mount names are long -- plenty run past thirty on their own, before a single
+-- conditional -- so a /cast list of six of them does not fit. Numeric ids are
+-- three to five digits and do, with room to spare.
 --
 -- Two halves, independent of each other:
 --
@@ -21,8 +22,9 @@
 --     also builds from) and LibActionButton-1.0 (Bartender4) keep their texture
 --     in a plain `.icon` field, so one repaint covers every bar addon.
 --
--- While mounted the command always dismounts instead, whatever the conditions
--- say, and the slot shows the dismount icon. One key both ways.
+-- While you are aboard something the command gets you off it instead, whatever
+-- the conditions say, and the slot shows the exit icon. A mount and a vehicle
+-- are two spellings of the same answer. One key both ways.
 --
 -- On top of the standard conditionals there is a shorthand, because a mount
 -- macro is mostly made of them:
@@ -30,6 +32,7 @@
 --   [m:cs]     ->  [mod:ctrl,mod:shift]     c = ctrl, s = shift, a = alt
 --   [nm:a]     ->  [nomod:alt]
 --   [nmnt,af]  ->  [nomounted,advflyable]   see CONDITIONS below
+--   [sp:2,af]  ->  [spec:2,advflyable]      see ARG_CONDITIONS below
 --
 -- It expands before the string ever reaches SecureCmdOptionParse, and unknown
 -- words are passed through, so full spellings still work and can be mixed in.
@@ -40,13 +43,48 @@
 -- line. It has to be spelled that way rather than as a /use; see the Effect
 -- section for both reasons.
 --
+-- A shapeshifted player needs one more line, and it cannot be helped from here.
+-- SummonByID is not protected, but half of it quietly is: the client cancels
+-- the caster's form for its own mount journal, which calls exactly the same
+-- function on the same line (Blizzard_MountCollection.lua,
+-- MountJournalMountButton_UseMount), and refuses to when an addon is the
+-- caller. So a druid in cat form gets "You must be in humanoid form" from /mnt
+-- while the very same mount still comes out of the journal. Nothing here can
+-- close that gap -- CancelShapeshiftForm is protected outright, and cancelling
+-- a form through the buff functions is blocked by name, precisely so that
+-- insecure code cannot reach the [form] conditional. Only the macro can do it,
+-- and /cancelform above the command is how, run securely under the keypress.
+-- It needs no condition of its own -- out of a form it is a no-op and says
+-- nothing, so it never draws the error that would stop the lines below it.
+--
+-- It goes at the top, above the /click lines as well as the mount, because
+-- dropping the form is what lets the extra go off at all -- most of them cannot
+-- be used shapeshifted either.
+--
+-- That has one consequence worth knowing about, and it is why the flight-form
+-- rule in the Effect section is written the way it is. A form drops
+-- synchronously: UPDATE_SHAPESHIFT_FORM arrives inside the /cancelform line,
+-- before the next one is read, and ArmEffect runs in it. On the ground that is
+-- exactly right, and the extra fires a line later. In the air it is not, since
+-- leaving flight form does not put you on the ground -- you are still up there
+-- and still pacified when the /click arrives.
+--
 -- Macro to put on the bar (no #showtooltip -- it does nothing here):
+--   /cancelform
 --   /click tmt140309
 --   /mnt [m:cs]11111;[m:a,nmnt]22222;33333
 --
 -- Ids may be either spellIDs or mountIDs; GetMountFromSpell sorts it out.
 
-local DISMOUNT_ICON = 6656430
+-- Blizzard's own vehicle-exit art, which is also what the dismount button
+-- wears: one picture for getting off whatever you are on. The two states behind
+-- it are told apart by the tooltip, not the icon.
+local EXIT_ICON = 6656430
+
+-- The client's own label on the Blizzard leave button, so it arrives localised,
+-- falling back to the dismount binding -- the same sentence in fewer words -- on
+-- a build that turns out not to carry it.
+local EXIT_TEXT = LEAVE_VEHICLE or BINDING_NAME_DISMOUNT
 
 --------------------------------------------------------------------------------
 -- Command
@@ -67,6 +105,18 @@ local CONDITIONS = {
   r    = "resting",    nr   = "noresting",
 }
 
+-- Conditions that carry an argument, which is passed through untouched: sp:2
+-- becomes spec:2, nsp:2 becomes nospec:2. Worth the six lines on a druid, where
+-- four specialisations times advflyable/flyable/noflyable is a dozen branches
+-- and spec: is written out in every one of them.
+--
+-- A word with a colon that is not listed here falls through to the plain-word
+-- path and out the other side unchanged, so spec:2 itself still works, and so
+-- does every conditional the client has that we have never heard of.
+local ARG_CONDITIONS = {
+  sp = "spec",
+}
+
 -- Rewrites the inside of every [...] group:
 --   [m:cs]        -> [mod:ctrl,mod:shift]
 --   [nmnt,af]     -> [nomounted,advflyable]
@@ -82,7 +132,16 @@ local function ExpandShorthand(args)
           parts[#parts + 1] = (neg == "n" and "nomod:" or "mod:") .. MOD_LETTERS[letter]
         end
       else
-        parts[#parts + 1] = CONDITIONS[token] or token
+        -- n? matches the letter n and nothing else, so sp:2 keeps its s and
+        -- nsp:2 gives up its n. An unlisted word leaves full nil and the token
+        -- goes on to the plain-word path below, still whole.
+        local no, word, arg = token:match("^(n?)(%a+):(.+)$")
+        local full = word and ARG_CONDITIONS[word]
+        if full then
+          parts[#parts + 1] = (no == "n" and "no" or "") .. full .. ":" .. arg
+        else
+          parts[#parts + 1] = CONDITIONS[token] or token
+        end
       end
     end
 
@@ -100,11 +159,33 @@ local function ResolveMountID(id)
   return C_MountJournal.GetMountFromSpell(id) or id
 end
 
+-- The one question asked before anything else: are you aboard something, and
+-- what gets you off it. Whatever comes back drives all three faces of the slot
+-- -- the press, the icon and the tooltip -- so they cannot drift apart.
+--
+-- Both answers work in a fight, which is when getting off matters most.
+-- Dismount and VehicleExit are the unprotected corner of an otherwise closed
+-- API and an addon may simply call them; their next-door neighbour
+-- CancelShapeshiftForm is protected, and the file header is where that costs
+-- something.
+--
+-- A flight path is deliberately not here. The client locks the action bars for
+-- the whole flight, so the slot cannot be pressed and nothing this returned
+-- would ever run.
+--
+-- The vehicle is asked before the mount because the driver of a two-seater is
+-- both at once, and VehicleExit puts them on the ground either way.
+local function ExitAction()
+  if CanExitVehicle() then return VehicleExit, EXIT_TEXT end
+  if IsMounted() then return Dismount, BINDING_NAME_DISMOUNT end
+end
+
 SLASH_TINYMOUNT1 = "/mnt"
 SlashCmdList["TINYMOUNT"] = function(msg)
-  -- mounted: the same key gets off, conditions are not consulted at all
-  if IsMounted() then
-    Dismount()
+  -- aboard something: the same key gets off, conditions are not consulted at all
+  local exit = ExitAction()
+  if exit then
+    exit()
     return
   end
 
@@ -229,10 +310,35 @@ local function Ready(kind, id)
   return start == 0 or (duration or 0) <= GCD
 end
 
--- Of the three states that should hold the extra back, cooldown is the only one
--- no macro conditional can express, so it is the only one applied by hand --
--- and by hand means out of combat. Nothing is lost by that: the driver in
--- EnsureEffect has already emptied the button by the time a fight starts.
+-- Of the states that should hold the extra back, the ones no macro conditional
+-- can express are applied by hand -- cooldown, and being aboard something,
+-- where the press has one job and no room for a passenger.
+--
+-- Being pacified is deliberately not one of them, and that is a decision, not
+-- an oversight. Flying pacifies you and a pacified player may use nothing at
+-- all, so an extra fired from a druid's flight form draws "you can't use that
+-- ability while pacified". It costs nothing but the noise: a /click that fails
+-- this way does not stop the client reading the macro, and the /mnt below it
+-- still summons -- measured in flight form, and worth knowing, because a /use
+-- or a /cast that fails does stop it.
+--
+-- That was disarmed here for a while, by form id -- the only thing that could
+-- see it. IsFlying() is false in flight form, C_Item.IsUsableItem is false for
+-- a toy always, even in town in no form, and C_Item.GetItemSpell into
+-- C_Spell.IsSpellUsable answers the same in every form. All four measured in
+-- game; the form id was the only one that drew the line in the right place.
+--
+-- It came back out anyway, because the line is in the wrong place to begin
+-- with. A form drops the instant /cancelform is read, while the client stays
+-- pacified a moment longer, so disarming on the form also silences the extra
+-- through the whole of that moment -- and that moment is where a working spell
+-- sits on every ordinary press. Trading a loss on every press for a loss on a
+-- rare one is a bad trade. The flight-form press draws its error and costs its
+-- mount; everything else fires.
+--
+-- By hand means out of combat, and nothing is lost by that: the driver in
+-- EnsureEffect has already emptied the button by the time a fight starts, and
+-- it goes on working through a lockdown when SetAttribute cannot.
 --
 -- Every unanswered question disarms, and that is the whole safety margin here.
 -- An extra that draws an error does not merely make a noise: the client stops
@@ -248,7 +354,7 @@ local function ArmEffect(name)
   local kind, id = ParseEffect(name)
   if not kind then return end
 
-  local usable = Have(kind, id) and Ready(kind, id)
+  local usable = not ExitAction() and Have(kind, id) and Ready(kind, id)
   btn:SetAttribute(kind, usable and EFFECT_ATTR[kind](id) or nil)
 end
 
@@ -359,8 +465,9 @@ hooksecurefunc(GameTooltip, "SetAction", function(tooltip, slot)
   local args = ArgsFor(macroID)
   if not args then return end
 
-  if IsMounted() then
-    tooltip:SetText(BINDING_NAME_DISMOUNT)
+  local _, exitText = ExitAction()
+  if exitText then
+    tooltip:SetText(exitText)
     tooltip:Show()
     return
   end
@@ -382,9 +489,11 @@ local function Restyle(btn)
     ArmEffect(name)
   end
 
+  local exit = ExitAction()
+
   local icon
-  if IsMounted() then
-    icon = DISMOUNT_ICON
+  if exit then
+    icon = EXIT_ICON
   else
     icon = Resolve(args)
   end
@@ -399,10 +508,10 @@ local function Restyle(btn)
   btn.icon:SetTexture(icon)
   btn.icon:Show()
   -- No mount can be summoned in combat, so the slot says as much rather than
-  -- looking live and doing nothing. Mounted it stays lit: Dismount is not
-  -- protected and the key works in a fight, which is when it is wanted most.
-  -- Either way the tooltip still answers.
-  btn.icon:SetDesaturated(InCombatLockdown() and not IsMounted())
+  -- looking live and doing nothing. Aboard something it stays lit: none of the
+  -- two ways off is protected and the key works in a fight, which is when it
+  -- is wanted most. Either way the tooltip still answers.
+  btn.icon:SetDesaturated(InCombatLockdown() and not exit)
 
   -- state changed under a resting cursor: redraw through the button so the
   -- SetAction hook above gets its turn
@@ -439,6 +548,13 @@ f:RegisterEvent("PLAYER_REGEN_DISABLED")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- [form] / [stance]
 f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+-- Nothing in the conditional language reaches a vehicle seat either, so
+-- ExitAction is re-asked off whatever announces one. The two unit events are
+-- filtered to the player: they fire for every party member in a vehicle
+-- otherwise, and a repaint per passenger is a repaint wasted.
+f:RegisterUnitEvent("UNIT_ENTERED_VEHICLE", "player")
+f:RegisterUnitEvent("UNIT_EXITED_VEHICLE", "player")
+f:RegisterEvent("VEHICLE_UPDATE")
 -- Nothing in the conditional language expresses a cooldown, so the extra's
 -- readiness is re-read off whatever announces one.
 f:RegisterEvent("SPELL_UPDATE_COOLDOWN")

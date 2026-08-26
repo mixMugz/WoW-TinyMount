@@ -4,17 +4,19 @@ Summon mounts by id, not by name — short macros with a live action bar icon.
 
 ## Why
 
-A WoW macro is capped at **255 bytes**, and a localised client spends two bytes
-per letter. A `/cast` list of six mount names in Russian, German or Korean does
-not fit — you end up truncating names until the macro silently stops working.
+A WoW macro is capped at **255 characters**, and localised mount names are long
+— plenty run past thirty on their own, before you have written a single
+conditional. Four or five of those and the macro is full. You end up truncating
+names until it silently stops working, and a truncated name fails quietly, which
+is the worst kind of failure.
 
-Numeric ids fit easily. This macro is 45 bytes:
+Numeric ids are three to five digits. This macro is 45 characters:
 
 ```
 /mnt [af,nmnt]11111;[f,nmnt]22222;[nmnt]33333
 ```
 
-The same thing spelled out in mount names is around 250 and climbing.
+The same three mounts spelled out by name do not fit at all.
 
 ## Install
 
@@ -39,18 +41,95 @@ Ids can be **either spellIDs or mountIDs**, whichever you have at hand.
 
 * the icon changes **as you hold a modifier**, before you click anything
 * the tooltip shows the mount that key would actually summon
-* mounted, the slot turns into a dismount button — same key, both ways
+* aboard anything, the slot turns into an exit button — same key, both ways
 
-### Dismounting
+### Getting off
 
-**While you are mounted the command always dismounts.** Conditions are not
-consulted at all — no modifier, no `[flyable]`, nothing in the macro can change
-that, and the slot shows the dismount icon to say so.
+**While you are aboard something the command gets you off it.** Conditions are
+not consulted at all — no modifier, no `[flyable]`, nothing in the macro can
+change that, and the slot shows the exit icon to say so.
+
+Two states count as aboard, and they are asked in this order:
+
+| State | What the key does | Tooltip |
+|---|---|---|
+| in a vehicle — a passenger seat, a turret, a siege engine | leaves it | *Leave Vehicle* |
+| on a mount | dismounts | *Dismount* |
+
+The vehicle is asked first because the driver of a two-seater is both at once,
+and leaving the vehicle puts them on the ground either way.
+
+Both work in combat and the slot stays lit for them, which is when getting off
+matters most. The icon is the same picture for both — it is Blizzard's own, and
+their exit-vehicle art and their dismount art have always been one file. The
+tooltip is what tells them apart.
+
+Flight paths are not covered, and cannot be: the client locks your action bars
+for the whole flight, so there is no press to answer. Use Blizzard's own leave
+button if you want off early.
 
 So one key does both directions and you never need a `[mounted]` branch or a
 separate `/dismount` line. If you would rather keep riding while a modifier is
 held, this is the one behaviour you cannot express in the macro — it is decided
 before the macro is read.
+
+### Shapeshifted
+
+Add one line above the command:
+
+```
+/cancelform
+/mnt [m:cs]11111;22222
+```
+
+No condition on it. `/cancelform` out of a form is a no-op and says nothing, so
+it will not draw the error that would stop the client reading the rest of the
+macro. One keypress still does the whole thing — the form is down by the time
+`/mnt` is read.
+
+It goes at the very top, above a `/click` line too, since dropping the form is
+also what lets the extra go off — most of them cannot be used shapeshifted
+either:
+
+```
+/cancelform
+/click tmt140309
+/mnt [m:cs]11111;22222
+```
+
+Without it, `/mnt` from cat, bear, moonkin, travel form or ghost wolf answers
+*You must be in humanoid form* and no mount comes out — while the very same
+mount still summons fine from the mount journal.
+
+That is not a bug in TinyMount and it cannot be fixed here. The journal calls
+exactly the same function, `C_MountJournal.SummonByID`, on one bare line. The
+function is not protected — TinyMount is built on that — but half of it is:
+the client cancels your form when its own code is the caller and refuses to when
+an addon is. There is no way around it from Lua either, because
+`CancelShapeshiftForm` is protected outright and cancelling a form through the
+buff functions is blocked by name, specifically so that addons cannot reach the
+`[form]` conditional.
+
+The macro can, though. `/cancelform` is run by the client under your own
+keypress, which is secure, and that is the whole difference.
+
+One thing to know if you share the macro across the account: `/cancelform` drops
+a warrior's or monk's stance too, since the game files those under the same
+mechanic. On a druid or a shaman there is nothing to lose.
+
+**One quirk in flight form.** Pressed while you are flying, the extra draws a
+red *you can't use that ability while pacified* — but the mount still comes out,
+so it costs you nothing except the complaint.
+
+The reason is a race you cannot arrange your way out of. `/cancelform` drops the
+form instantly, but the client keeps you *pacified* for a moment longer, so by
+the time the `/click` on the next line is read the form is gone, the extra looks
+perfectly usable, and firing it still fails.
+
+TinyMount does not try to silence it, and that is deliberate. That same moment
+after `/cancelform` is when the extra legitimately fires on every ordinary press
+out of cat, bear or moonkin form — suppressing it there to spare a rare flying
+press would break the common case to tidy up the rare one.
 
 ## Extras
 
@@ -113,23 +192,25 @@ are hard:
 It is held back in four states, and in all four it is held back silently — no
 red line, no "not ready yet" out of the speakers:
 
-* **Mounted.** The press is a dismount, and there is nothing to accompany.
+* **Aboard something.** Mounted, or in a vehicle. The press is an exit and there
+  is nothing to accompany.
 * **In combat.** No mount can be summoned in combat at all, so the slot greys
   out and the key does nothing whatsoever — TinyMount does not even ask, because
-  asking is what earns the client's complaint. Mounted is the exception: the key
-  still dismounts and the slot stays lit. The tooltip answers either way.
+  asking is what earns the client's complaint. Being aboard is the exception:
+  the key still gets you off and the slot stays lit. The tooltip answers either
+  way.
 * **On cooldown.** The global cooldown does not count; an extra is meant to ride
   off it.
 * **Not yours.** A spell this character has not learned, a toy that is in the
   box but locked to another class, an item you are out of.
 
-The first two are macro conditionals under the hood, so the client enforces them
-itself and goes on doing it through a fight. The last two have no conditional
-behind them and are applied by TinyMount out of combat, which is the only place
-they matter. Anything TinyMount cannot answer counts as held back: a press
-that quietly does nothing costs you one press, while an extra that draws an
-error stops the client reading the macro there and costs you the mount as
-well.
+Mounted and in combat are macro conditionals under the hood, so the client
+enforces them itself and goes on doing it through a fight. The rest have no
+conditional behind them and are applied by TinyMount out of combat, which is the
+only place they matter — in a fight the conditional has already emptied the
+button. Anything TinyMount cannot answer counts as held back: a press that
+quietly does nothing costs you one press, while an extra that draws an error
+stops the client reading the macro there and costs you the mount as well.
 
 ### One macro, several characters
 
@@ -158,7 +239,9 @@ they are written. If you need one without the other, use two keys.
 ## Shorthand
 
 Conditions are what a mount macro is mostly made of, so they have short forms.
-The rule: **with a colon it is a modifier, without one it is a state.**
+The rule: **a colon means the condition takes an argument.** `m:` is the
+modifier one, `sp:` is the specialisation one, and everything without a colon is
+a plain state.
 
 ### Modifiers
 
@@ -184,6 +267,22 @@ actually documents.
 | `af` / `naf` | advflyable / noadvflyable | | `c` / `nc` | combat / nocombat |
 | `fly` / `nfly` | flying / noflying | | `r` / `nr` | resting / noresting |
 
+### Specialisation
+
+| Short | Expands to |
+|-------|------------|
+| `[sp:2]` | `[spec:2]` |
+| `[nsp:2]` | `[nospec:2]` |
+| `[sp:1/2]` | `[spec:1/2]` |
+
+Two characters a branch, which sounds like nothing until you are a druid: four
+specialisations against `af` / `f` / `nf` is a dozen branches, and `spec:`
+appears in every one of them.
+
+```
+/mnt [sp:1,af]11111;[sp:1]22222;[sp:2,af]33333;[sp:2]44444
+```
+
 ### Mixing
 
 Anything not in the tables is passed through untouched, so full spellings and
@@ -193,8 +292,9 @@ every other conditional keep working next to the short ones:
 /mnt [m:a,nmnt,f]11111;[@mouseover,spec:2]22222;33333
 ```
 
-To add your own shorthand, edit the `CONDITIONS` table at the top of
-`TinyMount.lua`.
+To add your own shorthand, edit `CONDITIONS` at the top of `TinyMount.lua` for
+plain states, or `ARG_CONDITIONS` just below it for ones that take an argument —
+a line each.
 
 ## Finding ids
 
