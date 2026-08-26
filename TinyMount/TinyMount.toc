@@ -1,9 +1,10 @@
 ## Interface: 120100
-## Title: |cFF00C9FFTiny|r|cFFFFFFFFMount|r
+## Title: Tiny|cFF3FA9F5Mount|r
 ## Notes: |cFF00FF00|nMount macros by id, with a live icon and modifier shorthand|r
 ## Author: mixMugz (a.k.a. Муади-Ревущийфьорд)
 ## Category: Action Bars
-## Version: 1.2.0
+## IconTexture: Interface\AddOns\TinyMount\TinyMount.tga
+## Version: 1.2.1
 
 ## X-NOTE: The folder around this file must keep the name "TinyMount"
 ## X-NOTE: Verify Interface version via: /dump select(4, GetBuildInfo())

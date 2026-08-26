@@ -1,5 +1,10 @@
 # Release Notes
 
+## 1.2.1 — Icon
+
+* The addon list shows TinyMount's own icon instead of the default placeholder.
+  Nothing else changed.
+
 ## 1.2.0 — Vehicles
 
 The key already got you off a mount. It now gets you off everything else too.
