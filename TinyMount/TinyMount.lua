@@ -26,6 +26,14 @@
 -- the conditions say, and the slot shows the exit icon. A mount and a vehicle
 -- are two spellings of the same answer. One key both ways.
 --
+-- The slot also says when the answer is no. It greys where the mount will not
+-- come out -- in combat, and in a room the game refuses to let you mount in --
+-- the tooltip carries the client's own sentence for which of the two, and the
+-- press goes quiet rather than earning the complaint. All three read the same
+-- answer out of one place, UsableHere, so they cannot drift apart. What they
+-- never do is guess: the verdict is the client's, never IsIndoors, for the
+-- reason written over that function.
+--
 -- On top of the standard conditionals there is a shorthand, because a mount
 -- macro is mostly made of them:
 --
@@ -79,7 +87,13 @@
 --   /click tmt140309
 --   /mnt [m:cs]11111;[m:a,nmnt]22222;33333
 --
--- Ids may be either spellIDs or mountIDs; GetMountFromSpell sorts it out.
+-- Ids may be either spellIDs or mountIDs; GetMountFromSpell sorts it out. One
+-- id is neither: 000 is a random one out of your favourites, which the client
+-- spells as SummonByID(0) and puts its own button on in the mount journal.
+--
+--   /mnt [m:a]11111;000
+--
+-- The slot wears Blizzard's own art for it and the tooltip is theirs as well.
 
 -- Blizzard's own vehicle-exit art, which is also what the dismount button
 -- wears: one picture for getting off whatever you are on. The two states behind
@@ -90,6 +104,22 @@ local EXIT_ICON = 6656430
 -- falling back to the dismount binding -- the same sentence in fewer words -- on
 -- a build that turns out not to carry it.
 local EXIT_TEXT = LEAVE_VEHICLE or BINDING_NAME_DISMOUNT
+
+-- The one id that is not an id. SummonByID takes zero to mean "a random one out
+-- of my favourites" -- the same call behind Blizzard's own button in the mount
+-- journal -- so it is the client's feature and not an invention here.
+--
+-- Every spelling of zero arrives the same way, since the digits in a macro go
+-- through tonumber: 0, 00 and 000 are one number by the time anything here sees
+-- them. 000 is the one worth writing and the one the README teaches, because
+-- three digits line up with the ids around it and read as deliberate rather than
+-- as something half-typed.
+local RANDOM_ID = 0
+
+-- Blizzard's Summon Random Favorite Mount. Held as a spell rather than as a
+-- texture id so that the slot wears whatever picture they give it, and so the
+-- tooltip can be theirs too, localised, without a word of it written here.
+local RANDOM_SPELL = 150544
 
 --------------------------------------------------------------------------------
 -- Command
@@ -161,7 +191,47 @@ local function ParseArgs(args)
 end
 
 local function ResolveMountID(id)
+  -- zero is not a mount and must not be looked up as one -- it is the word for
+  -- a random favourite, and it has to reach SummonByID intact
+  if id == RANDOM_ID then return RANDOM_ID end
   return C_MountJournal.GetMountFromSpell(id) or id
+end
+
+-- Whether the client will let this one out where you are standing, and -- for a
+-- named mount -- its own localised sentence for why not. The one place that
+-- question is asked, because three things hang off the answer and must not
+-- disagree: the icon greys, the tooltip quotes the reason, and the command
+-- declines to ask out loud.
+--
+-- Nil is the third answer and means the question could not be put at all, on a
+-- build carrying neither call. Nil greys nothing and blocks nothing; every
+-- caller treats only a flat false as a refusal, which is what makes an
+-- unanswerable question harmless.
+--
+-- Asked of the client rather than worked out here, and that is the whole point.
+-- "Indoors" and "cannot mount here" are different questions: a garrison, a cave
+-- and half the buildings in a capital are all indoors and all let you mount, so
+-- IsIndoors or the [indoors] conditional would grey the slot several times an
+-- evening for nothing -- and a slot that lies about being dead is worse than one
+-- that never greys at all.
+local function UsableHere(mountID)
+  -- A random favourite names no mount, and the mount call will not answer for
+  -- it: GetMountUsabilityByID(0) returns nothing at all, measured. Blizzard's
+  -- own spell for it does answer, and answers about the place -- false in a
+  -- building that refuses mounts, true outside it, measured in both.
+  --
+  -- Worth knowing that this one is a proxy. It is spell usability, not the rule
+  -- SummonByID itself follows, and the two could disagree somewhere neither was
+  -- tried. If /mnt 000 ever goes quiet where it plainly should work, this branch
+  -- is the only thing in the file that could have done it. No reason comes back
+  -- either -- the spell's own tooltip carries that.
+  if mountID == RANDOM_ID then
+    if not C_Spell.IsSpellUsable then return nil end
+    return (C_Spell.IsSpellUsable(RANDOM_SPELL))
+  end
+
+  if not C_MountJournal.GetMountUsabilityByID then return nil end
+  return C_MountJournal.GetMountUsabilityByID(mountID, true)
 end
 
 -- The one question asked before anything else: are you aboard something, and
@@ -200,10 +270,23 @@ SlashCmdList["TINYMOUNT"] = function(msg)
   -- instead, and the extras above are held back the same way.
   if InCombatLockdown() then return end
 
+  -- `if id` and not `if id > 0`: zero is a legitimate answer here, and the one
+  -- the /mnt 000 shorthand for a random favourite arrives as. Lua counts it as
+  -- true, which is the only reason this line needs no special case -- and the
+  -- only reason it must not grow one.
   local id = ParseArgs(msg)
-  if id then
-    C_MountJournal.SummonByID(ResolveMountID(id))
-  end
+  if not id then return end
+
+  local mountID = ResolveMountID(id)
+
+  -- The same silence the combat guard above buys, for the same reason and at no
+  -- greater cost: if the client has already said this one cannot come out here,
+  -- asking it anyway changes nothing except that it says so out loud -- and the
+  -- slot has been grey for a while now, saying it quietly. Nothing is lost by
+  -- not asking; the summon was never going to happen.
+  if UsableHere(mountID) == false then return end
+
+  C_MountJournal.SummonByID(mountID)
 end
 
 --------------------------------------------------------------------------------
@@ -438,6 +521,15 @@ end
 -- assume -- only /stopmacro and a condition that matches nothing end a macro
 -- early. The extras are still kept above the mount rather than below it, for a
 -- different reason: using one mid-summon cancels the cast.
+--
+-- name -> the value last written to that button, false for none. The cooldown
+-- events at the bottom of the file arrive in bursts and mostly say the same
+-- thing twice, and SetAttribute on a secure button is not free -- it walks the
+-- attribute machinery whether or not the value differs -- so a write that
+-- changes nothing is not made. The one place the attribute is cleared behind
+-- this function's back is the UPDATE_MACROS handler, and that wipes this.
+local armed = {}
+
 local function ArmEffect(name)
   local btn = effects[name]
   if not btn or InCombatLockdown() then return end
@@ -446,7 +538,13 @@ local function ArmEffect(name)
   if not kind then return end
 
   local usable = not ExitAction() and Have(kind, id) and Ready(kind, id)
-  btn:SetAttribute(kind, usable and EFFECT_ATTR[kind](id) or nil)
+  -- false rather than nil, so that disarmed is a value the table can hold and
+  -- is told apart from never asked
+  local value = usable and EFFECT_ATTR[kind](id) or false
+  if armed[name] == value then return end
+
+  armed[name] = value
+  btn:SetAttribute(kind, value or nil)
 end
 
 -- Built on demand and out of combat: CreateFrame and SetAttribute are both
@@ -501,6 +599,11 @@ end
 
 -- LibActionButton keeps the slot in _state_action and parks .action at 0, so
 -- its fields have to be read first or every LAB button looks like slot zero.
+--
+-- This rule is spelled out a second time, inline, at the top of OnButtonUpdate,
+-- where the call this function would cost is worth avoiding. The two have to
+-- agree: if a bar library ever renames these fields, both change or neither
+-- works.
 local function SlotOf(btn)
   if btn._state_type then
     return btn._state_type == "action" and tonumber(btn._state_action) or nil
@@ -508,29 +611,77 @@ local function SlotOf(btn)
   return btn.action
 end
 
+-- slot -> the id of one of our macros sitting in it, false for a slot holding
+-- anything else. This is the hot path of the whole addon and it has to cost a
+-- table read, because of who calls it and how often.
+--
+-- The Update hook in Attach is the reason. ActionBarButtonEventsFrame answers
+-- one ACTIONBAR_SLOT_CHANGED by updating every button it knows, not the one
+-- whose slot changed, and an item on a bar draws one of those every time its
+-- stack moves in the bags. Measured over a dungeon: 21240 firings, and 45571
+-- button updates behind them, every one of which asks this question and is
+-- told no. A GetActionInfo behind it would be forty-five thousand calls into
+-- the client to hear the same answer.
+--
+-- What makes it cacheable is the direction. Which slot a button is showing is
+-- not safe to remember: a bar addon repoints that under a keypress, through a
+-- secure state driver, with no event to us at all, so a cache would go stale
+-- silently and freeze the icon on whatever the previous page held. What is in
+-- a slot is the opposite -- it changes only through ACTIONBAR_SLOT_CHANGED and
+-- UPDATE_MACROS, both of which arrive here, and paging does not touch it.
+local slotMacro = {}
+
+local function MacroForSlot(slot)
+  local macroID = slotMacro[slot]
+  if macroID == nil then
+    local kind, id = GetActionInfo(slot)
+    macroID = (kind == "macro" and ArgsFor(id) and id) or false
+    slotMacro[slot] = macroID
+  end
+  return macroID or nil
+end
+
 -- The macro sitting in this button's slot, if it is one of ours.
 local function MacroOf(btn)
   local slot = SlotOf(btn)
   if not slot then return nil end
 
-  local kind, macroID = GetActionInfo(slot)
-  if kind ~= "macro" then return nil end
+  local macroID = MacroForSlot(slot)
+  if not macroID then return nil end
 
-  local args = ArgsFor(macroID)
-  if not args then return nil end
-
-  return macroID, args
+  return macroID, ArgsFor(macroID)
 end
 
 -- What the macro resolves to right now, for the current modifiers and state.
 -- Nil when no branch matched and the macro has no default -- an entirely
 -- legitimate outcome for something like "/mnt [nomounted]12345".
+-- Returns icon, usable, spellID, reason, random. Icon first because the caller
+-- that runs most often wants only the first two; `random` tells the tooltip
+-- which of two calls will draw the thing spellID names.
+--
+-- `usable` and `reason` come from UsableHere, which is where the reasoning about
+-- them lives. Worth recording here only that isUsable out of GetMountInfoByID
+-- looks as though it would answer the same thing for free, since that call is
+-- made on this very line -- and does not. Measured in game: it stays true
+-- indoors, where the mount plainly will not come out.
 local function Resolve(args)
   local id = ParseArgs(args)
   if not id then return nil end
 
-  local _, spellID, icon = C_MountJournal.GetMountInfoByID(ResolveMountID(id))
-  return icon, spellID
+  -- A random favourite is Blizzard's own spell all the way down: the picture,
+  -- the tooltip and the answer to whether it can be used here all come from it.
+  -- No reason string, though -- that route does not carry one, so a grey random
+  -- slot says why in the spell's tooltip rather than in a line of our own.
+  if id == RANDOM_ID then
+    return C_Spell.GetSpellTexture(RANDOM_SPELL), UsableHere(RANDOM_ID),
+           RANDOM_SPELL, nil, true
+  end
+
+  local mountID = ResolveMountID(id)
+  local _, spellID, icon = C_MountJournal.GetMountInfoByID(mountID)
+  local usable, why = UsableHere(mountID)
+
+  return icon, usable, spellID, why
 end
 
 local watched = {}
@@ -541,14 +692,15 @@ local watched = {}
 -- including the periodic one GameTooltip_OnUpdate drives (GameTooltip.lua:457).
 -- That repaint is what used to flip the tooltip back to the macro name a moment
 -- after it appeared. The owner is already set by whoever called us.
-hooksecurefunc(GameTooltip, "SetAction", function(tooltip, slot)
+local function OnTooltipSetAction(tooltip, slot)
   if tooltip:IsForbidden() then return end
 
-  local kind, macroID = GetActionInfo(slot)
-  if kind ~= "macro" then return end
+  local macroID = MacroForSlot(slot)
+  if not macroID then return end
 
+  -- no nil check: MacroForSlot only ever names a macro it has already seen a
+  -- /mnt line in, so this cannot come back empty
   local args = ArgsFor(macroID)
-  if not args then return end
 
   local _, exitText = ExitAction()
   if exitText then
@@ -557,12 +709,28 @@ hooksecurefunc(GameTooltip, "SetAction", function(tooltip, slot)
     return
   end
 
-  local _, spellID = Resolve(args)
+  local _, usable, spellID, why, random = Resolve(args)
   if not spellID then return end
 
-  tooltip:SetMountBySpellID(spellID)
+  -- A random favourite is a spell and not a mount, so it is drawn as one: the
+  -- mount tooltip wants a mount behind the id and has none to work with here.
+  if random then
+    tooltip:SetSpellByID(spellID)
+  else
+    tooltip:SetMountBySpellID(spellID)
+  end
+  -- The client's own sentence for why this one will not come out here, under
+  -- its own tooltip. It arrives localised, so nothing about it is written here.
+  -- A refusal without a sentence behind it says nothing rather than something
+  -- invented: that is a random favourite, whose route carries no reason, and
+  -- whose own tooltip is already on screen above this line.
+  if usable == false and why then
+    tooltip:AddLine(why, 1, 0.1, 0.1, true)
+  end
   tooltip:Show()
-end)
+end
+
+hooksecurefunc(GameTooltip, "SetAction", OnTooltipSetAction)
 
 local function Restyle(btn)
   local macroID, args = MacroOf(btn)
@@ -582,11 +750,12 @@ local function Restyle(btn)
 
   local exit = ExitAction()
 
-  local icon
+  local icon, usable
   if exit then
-    icon = EXIT_ICON
+    -- getting off is never refused for where you are standing
+    icon, usable = EXIT_ICON, true
   else
-    icon = Resolve(args)
+    icon, usable = Resolve(args)
   end
   if not icon then
     -- nothing matched: fall back to the icon picked in the macro editor, so a
@@ -598,11 +767,17 @@ local function Restyle(btn)
 
   btn.icon:SetTexture(icon)
   btn.icon:Show()
-  -- No mount can be summoned in combat, so the slot says as much rather than
-  -- looking live and doing nothing. Aboard something it stays lit: none of the
-  -- two ways off is protected and the key works in a fight, which is when it
-  -- is wanted most. Either way the tooltip still answers.
-  btn.icon:SetDesaturated(InCombatLockdown() and not exit)
+  -- Two reasons the slot goes grey, and they are not the same kind of reason.
+  -- Combat is absolute and known for certain right here. Where you are standing
+  -- is the client's call, quoted rather than guessed at -- see UsableHere.
+  -- Strictly false, because nil is a question that went unanswered and a slot
+  -- greyed on an unanswered question would be a slot telling lies.
+  --
+  -- Aboard something it stays lit either way: neither way off is protected, the
+  -- key works in a fight, and no room refuses to let you dismount in it. Grey or
+  -- lit the tooltip still answers, and for a named mount it carries the client's
+  -- own sentence for the refusal.
+  btn.icon:SetDesaturated(not exit and (InCombatLockdown() or usable == false))
 
   -- state changed under a resting cursor: redraw through the button so the
   -- SetAction hook above gets its turn
@@ -611,11 +786,37 @@ local function Restyle(btn)
   end
 end
 
+-- The guard in front of Restyle on the one path that is not ours to throttle.
+-- The client answers a single ACTIONBAR_SLOT_CHANGED by updating every button
+-- it knows rather than the one whose slot changed, so this is entered some
+-- forty-five thousand times a dungeon to say "not mine". Restyle saying it
+-- takes four nested calls; this takes one.
+--
+-- So the slot is read flat here rather than through SlotOf -- the same rule
+-- written out a second time on purpose, and the comment on SlotOf says so from
+-- its end as well -- and the answer is one table read. Only a slot known not to
+-- hold one of our macros is dropped: an unknown slot falls through to Restyle,
+-- which asks the client and remembers, so a bar paging to a slot nothing has
+-- looked at yet still paints.
+local function OnButtonUpdate(btn)
+  local slot
+  if btn._state_type then
+    if btn._state_type == "action" then slot = tonumber(btn._state_action) end
+  else
+    slot = btn.action
+  end
+  if slot and slotMacro[slot] ~= false then Restyle(btn) end
+end
+
+local function RestyleAll()
+  for btn in pairs(watched) do Restyle(btn) end
+end
+
 local function Attach(btn)
   if watched[btn] then return end
   watched[btn] = true
   -- Blizzard family: Update is where the texture gets written
-  if btn.Update then hooksecurefunc(btn, "Update", Restyle) end
+  if btn.Update then hooksecurefunc(btn, "Update", OnButtonUpdate) end
   Restyle(btn)
 end
 
@@ -629,16 +830,53 @@ f:RegisterEvent("UPDATE_MACROS")
 -- [mod:*]
 f:RegisterEvent("MODIFIER_STATE_CHANGED")
 -- [mounted] / [flyable] / [advflyable] / [indoors] / [swimming]
+--
+-- [swimming] is the one state in the whole language with no event behind it at
+-- all, in this list or anywhere else, so a slot that branches on it is repainted
+-- by whatever happens to fire next rather than by entering the water. In
+-- practice that is the modifier press, which is also the moment anyone is
+-- looking at the slot, so it has never been worth more than this paragraph.
+--
+-- The zone events below carry a second reading now: whether the client will let
+-- this mount out where you are standing, which Resolve asks it directly. Walking
+-- into a building announces itself as ZONE_CHANGED_INDOORS, so the slot greys on
+-- the doorstep rather than on the next keypress.
 f:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")
 f:RegisterEvent("ZONE_CHANGED")
 f:RegisterEvent("ZONE_CHANGED_INDOORS")
 f:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+-- Walking into a building is not an event. ZONE_CHANGED_INDOORS sounds like it
+-- would be and is not: measured, walking in and out of a building that refuses
+-- mounts left the slot on its previous colour until the next modifier press.
+-- Most buildings never fire it.
+--
+-- What the client does announce is that the set of things you can use has
+-- changed, which is the same news said differently -- it is how Blizzard's own
+-- buttons know to grey themselves. The catch is that it says it constantly:
+-- power, auras and half a fight drive it too.
+--
+-- So it is not answered with a repaint. It is answered with one question, and
+-- a repaint only when the answer is not the one from last time. The question is
+-- put to the random-favourite spell because that reading is about the place and
+-- not about any one mount, so a single call covers every slot on the bars.
+f:RegisterEvent("SPELL_UPDATE_USABLE")
+local lastUsableHere
 -- [combat]
 f:RegisterEvent("PLAYER_REGEN_DISABLED")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
 -- [form] / [stance]
 f:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+-- [resting]
+f:RegisterEvent("PLAYER_UPDATE_RESTING")
+-- [spec:N], and the [sp:N] shorthand for it. Filtered to the player for the
+-- same reason the vehicle events below are: the event carries a unit, so
+-- registered plainly it arrives for every member of the group and each one
+-- costs a full repaint pass. Measured at one or two firings over a dungeon
+-- either way, so this buys nothing in practice -- it is here because the
+-- unfiltered spelling is a trap two lines above a comment warning about it.
+f:RegisterUnitEvent("PLAYER_SPECIALIZATION_CHANGED", "player")
 -- Nothing in the conditional language reaches a vehicle seat either, so
 -- ExitAction is re-asked off whatever announces one. The two unit events are
 -- filtered to the player: they fire for every party member in a vehicle
@@ -659,10 +897,85 @@ f:RegisterEvent("BAG_UPDATE_DELAYED")
 -- does not work.
 f:RegisterEvent("TOYS_UPDATED")
 
-f:SetScript("OnEvent", function(self, event)
+-- The four above say something about an extra and nothing at all about an icon:
+-- no conditional in the language reads a cooldown, a bag or the toy box. They
+-- are also the loudest events here by a wide margin -- SPELL_UPDATE_COOLDOWN
+-- fires on every cast and every global -- so answering them with the repaint
+-- pass at the bottom of the handler was the largest piece of work this file
+-- did: measured over a dungeon at some four thousand firings, each sweeping a
+-- hundred-odd action slots to ask what they held, in order to repaint nothing.
+-- Around four hundred thousand questions to the client, all of them idle.
+--
+-- They get the short answer instead. Re-arming reads `effects`, not the buttons
+-- -- nought to a handful of entries, and an empty loop for a player who uses no
+-- extras at all. Note what is given up by returning early: creating a button
+-- that does not exist yet, which lives in EnsureEffect on the full pass. Every
+-- way a new macro can appear runs one of those -- ACTIONBAR_SLOT_CHANGED for a
+-- slot, UPDATE_MACROS for an edit, PLAYER_LOGIN for a session, and
+-- PLAYER_REGEN_ENABLED for anything that happened while the two of them were
+-- barred from acting.
+--
+-- The other half of the same measurement is why PLAYER_UPDATE_RESTING and
+-- PLAYER_SPECIALIZATION_CHANGED appear above. [resting] and [spec] were being
+-- repainted by this storm rather than by an event of their own, quietly and by
+-- accident, and would have gone stale the moment it stopped.
+local ARM_ONLY = {
+  SPELL_UPDATE_COOLDOWN = true,
+  BAG_UPDATE_COOLDOWN   = true,
+  BAG_UPDATE_DELAYED    = true,
+  TOYS_UPDATED          = true,
+}
+
+f:SetScript("OnEvent", function(self, event, arg1)
+  if ARM_ONLY[event] then
+    for name in pairs(effects) do ArmEffect(name) end
+    return
+  end
+
+  -- see the registration: loud event, one cheap question, and a repaint only on
+  -- an answer that has actually changed
+  if event == "SPELL_UPDATE_USABLE" then
+    local now
+    if C_Spell.IsSpellUsable then now = (C_Spell.IsSpellUsable(RANDOM_SPELL)) end
+    if now == lastUsableHere then return end
+    lastUsableHere = now
+  end
+
+  -- ACTIONBAR_SLOT_CHANGED names the slot that changed, and almost none of them
+  -- are ours. An item sitting on a bar draws one of these every time its stack
+  -- moves in the bags, so a run that loots a lot fires thousands: measured at
+  -- 9476 in a single dungeon, against 62 modifier presses in the same run, and
+  -- the bag events that caused them line up one to one.
+  --
+  -- One question about the slot answers all of them, in place of a hundred
+  -- questions about the buttons. A slot that has stopped holding our macro
+  -- needs no answer at all -- Restyle only ever paints a slot it recognises and
+  -- leaves every other one as its own bar addon drew it, so there is nothing to
+  -- undo.
+  --
+  -- What this event announces is also exactly what MacroForSlot remembers, so
+  -- it is the thing that has to make it forget. Slot zero is the client saying
+  -- it changed everything: the cache goes wholesale and the full pass at the
+  -- bottom fills it back in.
+  if event == "ACTIONBAR_SLOT_CHANGED" then
+    if arg1 and arg1 ~= 0 then
+      slotMacro[arg1] = nil
+      if not MacroForSlot(arg1) then return end
+
+      for btn in pairs(watched) do
+        if SlotOf(btn) == arg1 then Restyle(btn) end
+      end
+      return
+    end
+    wipe(slotMacro)
+  end
+
   if event == "UPDATE_MACROS" then
     wipe(macroArgs)
     wipe(macroEffect)
+    -- a body edited into or out of carrying a /mnt line changes the answer for
+    -- every slot holding it, and the event does not say which macro moved
+    wipe(slotMacro)
 
     -- Every button is emptied here and filled back in by the Restyle pass at
     -- the bottom, which reads the macros afresh. A name edited out of every
@@ -674,12 +987,22 @@ f:SetScript("OnEvent", function(self, event)
     -- there, and a macro edited mid-fight is rare enough that the next edit
     -- out of combat can pick it up.
     if not InCombatLockdown() then
+      -- cleared behind ArmEffect's back, so what it remembers writing is no
+      -- longer what the button carries. In combat neither happens, and what it
+      -- remembers is still true.
+      wipe(armed)
       for name, btn in pairs(effects) do
         local kind = ParseEffect(name)
         if kind then btn:SetAttribute(kind, nil) end
       end
     end
   end
+
+  -- Belt and braces around the one way the cache could be wrong: a slot asked
+  -- about before the bars are populated answers false, and false is remembered.
+  -- The client does announce the fill, but it is cheaper to distrust that once
+  -- per loading screen than to debug a slot that never paints again.
+  if event == "PLAYER_ENTERING_WORLD" then wipe(slotMacro) end
 
   if event == "PLAYER_LOGIN" then
     -- Blizzard template registers itself here, and so does every Dominos button
@@ -704,9 +1027,29 @@ f:SetScript("OnEvent", function(self, event)
     if LAB then
       for btn in pairs(LAB:GetAllButtons()) do Attach(btn) end
       LAB.RegisterCallback(f, "OnButtonCreated", function(_, btn) Attach(btn) end)
-      LAB.RegisterCallback(f, "OnButtonUpdate",  function(_, btn) Restyle(btn) end)
+      LAB.RegisterCallback(f, "OnButtonUpdate",  function(_, btn) OnButtonUpdate(btn) end)
     end
   end
 
-  for btn in pairs(watched) do Restyle(btn) end
+  RestyleAll()
+
+  -- Entering combat is painted twice, a frame apart, and this is the only
+  -- event that needs it. The bar addon answers the same moment with its own
+  -- usable pass -- ACTIONBAR_UPDATE_USABLE arrives right behind
+  -- PLAYER_REGEN_DISABLED -- and that pass writes the icon's saturation
+  -- without going through Update, so it lands after us and undoes the greying.
+  -- Hovering the slot afterwards put it back, which is what gave this away:
+  -- that does go through Update, so we came last for once.
+  --
+  -- Leaving combat looks right only by luck. There we and the bar addon are
+  -- writing the same answer, so it does not matter who writes it second.
+  --
+  -- A dozen or two firings over a dungeon, against forty-five thousand button
+  -- updates, so the second pass costs nothing. Deferring the first pass instead
+  -- of adding a second one would be wrong: UPDATE_SHAPESHIFT_FORM has to stay
+  -- synchronous (see the header), and one rule for all events is easier to keep
+  -- than two.
+  if event == "PLAYER_REGEN_DISABLED" then
+    C_Timer.After(0, RestyleAll)
+  end
 end)

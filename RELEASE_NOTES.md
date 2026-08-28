@@ -1,5 +1,92 @@
 # Release Notes
 
+## 1.4.0 — Honest slot
+
+The slot now tells you more of what it knows before you press it, and does a
+great deal less work while it is at it.
+
+**`000` summons a random favourite.** One id in the whole language is not an id:
+
+```text
+/mnt [m:a]11111;000
+```
+
+Alt for the one you chose, anything else for pot luck. It is the same call that
+sits behind Blizzard's own button at the top of the mount journal, so the slot
+wears their art for it and the tooltip is theirs as well, in your language.
+Write it as three digits — `0` and `00` land in the same place, but `000` lines
+up with the ids around it and reads as deliberate.
+
+It greys out where it will not work, the same as a named mount. There is no one
+mount to ask about until the key goes down, so the answer comes from Blizzard's
+spell for it instead — which turns out to know perfectly well whether you are
+somewhere you may mount.
+
+**The slot did not grey out when a fight started.** It greyed out if you hovered
+it, or pressed a modifier, or did anything else that made the bar redraw — which
+is what made this hard to see and easy to dismiss. Entering combat, the bar addon
+answers the same moment with a pass of its own that rewrites the icon's
+saturation, and it lands after TinyMount. Leaving combat looked right only
+because both were writing the same answer there. The slot is now painted a
+second time, a frame later, on that one event.
+
+**The slot now greys where the mount will not come out, not only in combat.**
+Step into a building that refuses mounts and the icon says so before you press
+anything; step out and it lights up again. Hover it while it is grey and the
+tooltip carries the client's own sentence for why — *Can only be used
+outdoors*, in your language, because it is the client's line and not ours.
+
+The reading comes from `C_MountJournal.GetMountUsabilityByID`, which is the
+client answering about **that mount, in that spot**, by the same rules it uses
+to grey out its own mount journal. It is deliberately not `IsIndoors()` or the
+`[indoors]` conditional: a garrison, a cave and half the buildings in a capital
+are all indoors and all let you mount, so those would have greyed the slot
+several times an evening for nothing. A slot that lies about being dead is
+worse than one that never greys.
+
+Aboard something it stays lit regardless — no room refuses to let you dismount
+in it.
+
+Walking into a building is not something the client announces — `ZONE_CHANGED_INDOORS`
+sounds as though it would and does not fire for most of them. What it does
+announce is that the set of things you can use has changed, which is the same
+news said differently, and is how its own buttons know to grey themselves. That
+is watched instead, and answered with one question rather than a repaint, so the
+slot changes colour on the doorstep without the event's noise costing anything.
+
+**And the press goes quiet there too**, the way it already did in combat. Once
+the client has said this one cannot come out here, asking it anyway changes
+nothing except that it says so out loud — and the slot has been grey for a while
+by then, saying it quietly. Nothing is given up: the summon was never going to
+happen.
+
+**Cooldown events no longer repaint anything.** `SPELL_UPDATE_COOLDOWN` fires on
+every cast and every global, and each one used to sweep every button on your
+bars asking what it held — several hundred thousand questions to the client over
+a dungeon, to repaint nothing, since no macro condition can read a cooldown in
+the first place. They now go straight to the one thing they have something to
+say about: whether an extra is ready.
+
+**A changed action slot repaints that slot, not all of them.** An item sitting
+on a bar announces a change every time its stack moves in your bags, so a run
+that loots a lot fires tens of thousands of these. The event names the slot it
+means, and TinyMount now takes it at its word.
+
+**`[resting]` and `[spec:N]` have events of their own.** They were being
+repainted by the noise above, by accident, and would have gone stale the moment
+it stopped. `[swimming]` is the one state left with no event anywhere in the
+client — it repaints on the next thing that happens, usually the modifier press,
+which is also when anyone is looking.
+
+**What this was worth, honestly.** Measured with `GetFunctionCPUUsage`, the
+whole addon costs **88 ms over a dungeon run** — and it was never far off that
+before, either. The figure in the addon CPU list said 2000–12000 ms, and that
+figure was not ours: `hooksecurefunc` bills the addon that installed a hook for
+the time spent inside the function it hooked, so TinyMount was being charged for
+how the bar addon redraws its own buttons. Several hundred thousand idle calls
+into the client really were removed, and that is worth doing on its own merits.
+It was never the two seconds anything appeared to say it was.
+
 ## 1.3.0 — Quiet
 
 A macro line that fails says so out loud — red text across the screen and, for
@@ -11,7 +98,7 @@ noise, and now there is a way to turn it off for one line.
   client keeps that failure to itself. Both halves go — the text and the spoken
   error — for a fraction of a second, and everything comes back on its own.
 
-  ```
+  ```text
   #showtooltip Divine Steed
   /tmq
   /use item:140309
@@ -125,7 +212,7 @@ to hit it stops digging sooner.
 A mount macro can now carry a second thing that goes off with it: a toy, a
 spell, or an item. It rides on a `/click` line above the command.
 
-```
+```text
 /click tmt140309
 /mnt [m:cs]11111;22222
 ```

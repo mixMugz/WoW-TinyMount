@@ -12,7 +12,7 @@ is the worst kind of failure.
 
 Numeric ids are three to five digits. This macro is 45 characters:
 
-```
+```text
 /mnt [af,nmnt]11111;[f,nmnt]22222;[nmnt]33333
 ```
 
@@ -28,7 +28,7 @@ is why it is already spelled that way here.
 
 Make a normal macro and put it on your bar:
 
-```
+```text
 /mnt [m:cs]11111;[m:as]22222;[m:ac]33333;[m:c]44444;[m:s]55555;[m:a]66666;77777
 ```
 
@@ -37,11 +37,39 @@ custom commands. Pick any icon in the macro editor; TinyMount overwrites it.
 
 Ids can be **either spellIDs or mountIDs**, whichever you have at hand.
 
+### A random favourite
+
+One id is not an id. **`000` summons a random mount out of your favourites** —
+the same thing Blizzard's own button does at the top of the mount journal, since
+it is the same call underneath:
+
+```text
+/mnt [m:a]11111;000
+```
+
+Alt for the one you picked, anything else for pot luck. The slot wears
+Blizzard's art for it and the tooltip is theirs too, in your own language.
+
+Write it as three digits. `0` and `00` reach the same place — they are one
+number by the time the macro is read — but `000` lines up with the ids around it
+and reads as something you meant rather than something you half-typed.
+
+It greys out where it will not work, the same as a named mount does — the answer
+comes from Blizzard's own spell for it rather than from any one mount, since with
+`000` there is no one mount until you press the key.
+
 ### What you get on the bar
 
 * the icon changes **as you hold a modifier**, before you click anything
 * the tooltip shows the mount that key would actually summon
 * aboard anything, the slot turns into an exit button — same key, both ways
+* it greys out where the mount will not come out — in combat, and in a room the
+  game refuses to let you mount in — and the key goes quiet there rather than
+  drawing a red line across your screen
+* hover it while a room is the reason and the tooltip carries the client's own
+  sentence for it, in your own language
+* aboard something it stays lit either way: getting off works in a fight, and no
+  room refuses to let you dismount in it
 
 ### Getting off
 
@@ -52,7 +80,7 @@ change that, and the slot shows the exit icon to say so.
 Two states count as aboard, and they are asked in this order:
 
 | State | What the key does | Tooltip |
-|---|---|---|
+| --- | --- | --- |
 | in a vehicle — a passenger seat, a turret, a siege engine | leaves it | *Leave Vehicle* |
 | on a mount | dismounts | *Dismount* |
 
@@ -77,7 +105,7 @@ before the macro is read.
 
 Add one line above the command:
 
-```
+```text
 /cancelform
 /mnt [m:cs]11111;22222
 ```
@@ -91,7 +119,7 @@ It goes at the very top, above a `/click` line too, since dropping the form is
 also what lets the extra go off — most of them cannot be used shapeshifted
 either:
 
-```
+```text
 /cancelform
 /click tmt140309
 /mnt [m:cs]11111;22222
@@ -136,7 +164,7 @@ press would break the common case to tidy up the rare one.
 An off-GCD toy or a cosmetic spell can go off together with the mount, on a
 `/click` line above the command:
 
-```
+```text
 /click tmt140309
 /mnt [m:cs]11111;22222
 ```
@@ -149,7 +177,7 @@ id. TinyMount builds a hidden secure button under that name the first time it
 sees the macro, so there is nothing to set up and no settings file.
 
 | | Kind | Use it for |
-|---|---|---|
+| --- | --- | --- |
 | `tmt` | toy | anything out of the toy box |
 | `tms` | spell | a spell you know |
 | `tmi` | item | something that really sits in your bags |
@@ -167,7 +195,7 @@ for and the click does nothing at all.
 Spell them out in full — the shorthand below is expanded by `/mnt` and nothing
 else reads it:
 
-```
+```text
 /click [mod:shift]tms121183
 /mnt [m:a]11111;22222
 ```
@@ -203,7 +231,7 @@ bar does that.
 
 Which is why this does nothing whatsoever:
 
-```
+```text
 /use Healthstone
 /click tmt140309
 ```
@@ -255,7 +283,7 @@ A macro can carry more than one `/click` line. Each is an ordinary line of the
 macro, the client runs them in turn, and TinyMount builds a separate hidden
 button for every name it finds — so they do not compete for anything:
 
-```
+```text
 /click tms121183
 /click tmt140309
 /mnt [m:cs]11111;22222
@@ -279,7 +307,7 @@ they are written. If you need one without the other, use two keys.
 the spoken one both — and turns everything back on by itself a fraction of a
 second later.
 
-```
+```text
 #showtooltip Divine Steed
 /tmq
 /use item:140309
@@ -318,7 +346,7 @@ a plain state.
 ### Modifiers
 
 | Short | Expands to |
-|-------|------------|
+| ------- | ------------ |
 | `[m:c]` | `[mod:ctrl]` |
 | `[m:s]` | `[mod:shift]` |
 | `[m:a]` | `[mod:alt]` |
@@ -333,16 +361,23 @@ actually documents.
 ### States
 
 | Short | Expands to | | Short | Expands to |
-|-------|------------|---|-------|------------|
+| ------- | ------------ | --- | ------- | ------------ |
 | `mnt` / `nmnt` | mounted / nomounted | | `sw` / `nsw` | swimming / noswimming |
 | `f` / `nf` | flyable / noflyable | | `in` / `out` | indoors / outdoors |
 | `af` / `naf` | advflyable / noadvflyable | | `c` / `nc` | combat / nocombat |
 | `fly` / `nfly` | flying / noflying | | `r` / `nr` | resting / noresting |
 
+One caveat, and only one: **`sw` is the single state the client announces
+nowhere.** Every other condition in that table has an event behind it, so the
+icon follows it the moment it changes. Swimming has none, anywhere in the API, so
+a slot branching on it repaints on the next thing that does happen — in practice
+the modifier press, which is also the moment you are looking at the slot. The
+command itself is never wrong; only the picture can lag.
+
 ### Specialisation
 
 | Short | Expands to |
-|-------|------------|
+| ------- | ------------ |
 | `[sp:2]` | `[spec:2]` |
 | `[nsp:2]` | `[nospec:2]` |
 | `[sp:1/2]` | `[spec:1/2]` |
@@ -351,7 +386,7 @@ Two characters a branch, which sounds like nothing until you are a druid: four
 specialisations against `af` / `f` / `nf` is a dozen branches, and `spec:`
 appears in every one of them.
 
-```
+```text
 /mnt [sp:1,af]11111;[sp:1]22222;[sp:2,af]33333;[sp:2]44444
 ```
 
@@ -360,7 +395,7 @@ appears in every one of them.
 Anything not in the tables is passed through untouched, so full spellings and
 every other conditional keep working next to the short ones:
 
-```
+```text
 /mnt [m:a,nmnt,f]11111;[@mouseover,spec:2]22222;33333
 ```
 
@@ -372,13 +407,13 @@ a line each.
 
 Paste into chat to list your favourite mounts with their spellIDs:
 
-```
+```text
 /run for _,i in ipairs(C_MountJournal.GetMountIDs()) do local n,s,_,_,_,_,f=C_MountJournal.GetMountInfoByID(i) if f then print(s,n) end end
 ```
 
 Or search by a fragment of the name:
 
-```
+```text
 /run for _,i in ipairs(C_MountJournal.GetMountIDs()) do local n,s=C_MountJournal.GetMountInfoByID(i) if n:find("Obsidian") then print(s,n) end end
 ```
 
@@ -387,7 +422,7 @@ A spellID from Wowhead's URL works just as well.
 ## Compatibility
 
 | Bars | Supported |
-|------|-----------|
+| ------ | ----------- |
 | Default Blizzard bars | yes |
 | Dominos | yes — it builds from the Blizzard button template |
 | Bartender4 and other LibActionButton-1.0 bars | yes |
@@ -401,6 +436,28 @@ A spellID from Wowhead's URL works just as well.
 * If no branch of the macro matches — you are already mounted and everything is
   behind `[nmnt]`, say — the slot falls back to the icon you picked in the macro
   editor rather than lying about the last mount shown.
+* The grey-when-you-cannot-mount check asks the client
+  (`C_MountJournal.GetMountUsabilityByID`), not the map. `IsIndoors()` and
+  `[indoors]` are a different question — a garrison, a cave and most buildings
+  in a capital are indoors and let you mount anyway — so branching on those
+  would grey the slot for no reason several times an evening.
+* When the slot is grey the key goes quiet too, rather than earning the client's
+  complaint — the same way it already worked in combat. Nothing is given up by
+  that: the summon the press would have asked for was already refused.
+* There is no event for walking into a building — `ZONE_CHANGED_INDOORS` does
+  not fire for most of them. TinyMount watches `SPELL_UPDATE_USABLE` instead,
+  which the client sends whenever what you can use changes, and repaints only
+  when the answer is different from the last one it saw.
+* Nothing here polls. There is no `OnUpdate` and no timer in the addon; the icon
+  is repainted off the events that can change what the macro resolves to, and
+  off the bar addon's own redraws so that it does not get overwritten. Measured
+  with `GetFunctionCPUUsage`, the whole thing costs about 88 ms over a dungeon
+  run.
+* If you go looking at the addon CPU list, expect TinyMount to appear far higher
+  than that. `hooksecurefunc` bills the addon that installed a hook for the time
+  spent inside the function it hooked, so an addon that follows your bars is
+  charged for how your bar addon redraws them. The per-function numbers are the
+  honest ones.
 
 ## Built with
 
