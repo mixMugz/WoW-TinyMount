@@ -4,7 +4,7 @@
 ## Author: mixMugz (a.k.a. Муади-Ревущийфьорд)
 ## Category: Action Bars
 ## IconTexture: Interface\AddOns\TinyMount\TinyMount.tga
-## Version: 1.4.0
+## Version: 1.5.0
 
 ## X-NOTE: The folder around this file must keep the name "TinyMount"
 ## X-NOTE: Verify Interface version via: /dump select(4, GetBuildInfo())

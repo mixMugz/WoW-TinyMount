@@ -1,5 +1,49 @@
 # Release Notes
 
+## 1.5.0 — A toy on its own
+
+Extras have always belonged to the mount. They ride on a `/click` line above
+`/mnt`, and they are held back wherever the mount is held back — in combat, in
+the saddle, on cooldown. That is right for a passenger, and wrong for a toy you
+simply want to use.
+
+**`/click ttoy<id>` fires a toy from any macro at all.**
+
+```text
+/click ttoy140309
+```
+
+One that hearths, one that opens a profession, one that carries nothing else.
+No `/mnt` anywhere in sight. And it works **in combat** — on a boss, mid-pull —
+as well as mounted or in a vehicle.
+
+Such a macro is not touched in any other way. TinyMount does not paint its icon,
+does not take over its tooltip, never greys it out: the slot stays exactly as
+your bar addon drew it. Only the button behind the name is ours.
+
+**There are no checks on it, and that is the design rather than a shortcut.**
+Filtering a button means writing an attribute to it, and writing an attribute is
+forbidden in combat — so a filtered button freezes on whatever it held when the
+fight started. A toy that came off cooldown mid-fight would stay dead until the
+fight ended, and say nothing about why. A button nobody touches cannot be wrong
+that way.
+
+The cost is the client's own complaint when the toy is on cooldown or is not
+yours, and that is all it costs — a `/click` that fails stops nothing below it.
+`/tmq` on the line above silences it, which is what `/tmq` has been for since
+1.3.0.
+
+The names are read from your whole macro list, account and character both, at
+login, across a loading screen, when you save a macro, and when you drop out of
+combat. Never while repainting a slot — so a `ttoy` button costs nothing at all
+while you play. It appears in none of the hot paths: not in the cooldown storm
+that re-arms extras, not in the repaint pass, not in the bar addon's redraws.
+
+The old `tmt` / `tms` / `tmi` extras are untouched and behave exactly as before,
+mount and all. The two are deliberately separate rather than one thing with a
+setting, because every state one of them cares about is a state the other
+ignores on purpose.
+
 ## 1.4.0 — Honest slot
 
 The slot now tells you more of what it knows before you press it, and does a

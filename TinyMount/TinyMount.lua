@@ -51,6 +51,11 @@
 -- line. It has to be spelled that way rather than as a /use; see the Effect
 -- section for both reasons.
 --
+-- A toy that is nobody's passenger has a name of its own, ttoy<id>. It works in
+-- any macro at all and is held back by nothing, combat included. See the Toy
+-- section, which shares no state with the Effect one and is deliberately its
+-- own thing rather than a setting on it.
+--
 -- For the lines this addon has nothing to do with -- a plain /use or /cast that
 -- is going to fail -- /tmq mutes the client's complaint about the line under
 -- it, text and voice both, for a fraction of a second, and puts everything back
@@ -576,6 +581,159 @@ local function EnsureEffect(name)
 end
 
 --------------------------------------------------------------------------------
+-- Toy
+--------------------------------------------------------------------------------
+
+-- A toy on its own, in any macro at all, with nothing above it deciding whether
+-- it may go off:
+--
+--   /click ttoy140309
+--
+-- Everything in the Effect section above exists to serve a mount: an extra
+-- there is held back wherever the mount is, because the press has one job and a
+-- passenger that fires when the mount does not is noise. This is the other
+-- thing entirely -- a toy because you want the toy -- and the two are kept
+-- apart rather than made into one configurable thing, because every state
+-- either of them cares about is a state the other deliberately ignores.
+--
+-- Hence the plainer name: ttoy, then the id. No kind letter, because there is
+-- only one kind. A spell or an item wants the checks that were just thrown
+-- away -- a spell you have not learned and an item you are out of both have
+-- something to say, whereas a toy is either in the box or it is not.
+--
+-- What "no checks" buys is worth being precise about, because it is not
+-- laziness. The button is written once and never touched again: type and toy
+-- both set at creation, no attribute driver, no re-arming, no event of its own.
+-- That is what makes it work in combat at all. SetAttribute is barred under a
+-- lockdown, so anything filtered through it freezes on whatever it held when
+-- the fight started -- and the failure that produces is the bad one: a toy that
+-- came off cooldown mid-fight would stay dead until the fight ended, silently.
+-- A button nobody touches has no such state to be wrong about.
+--
+-- The cost is the client's own complaint when the toy is on cooldown or is not
+-- yours, and that is all it is: a /click that fails stops nothing below it. Put
+-- /tmq above the line if the noise is unwelcome.
+--
+-- Conditionals are not our business here either. /click is the client's command
+-- and it parses its own [...] before ever looking the name up, so
+--
+--   /click [nostealth] ttoy140309
+--
+-- is decided before any of this runs. Full spellings only -- the shorthand in
+-- the Command section is expanded by /mnt and read by nothing else.
+local MacroConsts = Constants and Constants.MacroConsts
+local MAX_ACCOUNT_MACROS = (MacroConsts and MacroConsts.MAX_ACCOUNT_MACROS) or 120
+
+-- name -> button, and name -> the id last written to it. The second table is
+-- what makes a repeat scan free: SetAttribute walks the attribute machinery
+-- whether or not the value differs, and the scan runs whole every time.
+local toys, toyArmed = {}, {}
+
+local function EnsureToy(name)
+  -- CreateFrame and SetAttribute are both barred once the lockdown is up, so a
+  -- macro written mid-fight gets its button when the fight ends instead --
+  -- ScanToysAfterCombat is what comes back for it.
+  if InCombatLockdown() then return end
+
+  local id = name:match("^ttoy(%d+)$")
+  if not id then return end
+
+  local btn = toys[name]
+  if not btn then
+    btn = CreateFrame("Button", name, nil, "SecureActionButtonTemplate")
+    btn:Hide()
+    btn:RegisterForClicks("AnyUp")
+    -- the same trap as in EnsureEffect: /click clicks with down = false, and
+    -- without this the button asks a cvar most players have on and then does
+    -- nothing at all, silently
+    btn:SetAttribute("useOnKeyDown", false)
+    btn:SetAttribute("type", "toy")
+    toys[name] = btn
+  end
+
+  if toyArmed[name] ~= id then
+    toyArmed[name] = id
+    -- the handler tonumber()s what it is given, so the digits go straight
+    -- through (SecureTemplates.lua, SECURE_ACTIONS.toy)
+    btn:SetAttribute("toy", id)
+  end
+end
+
+-- Every macro the character has, account and character both, whether or not it
+-- sits on a bar and whether or not it mentions /mnt. Read straight out of
+-- GetMacroBody rather than through the Icon section's cache, because none of
+-- this has anything to do with an icon and sharing the cache would only tie the
+-- two together again.
+--
+-- Lazy match, so a conditional in front of the name is fine:
+-- /click [combat]ttoy1
+--
+-- Lazy also means the name is found anywhere on the line, so a /click naming
+-- somebody else's button that happens to end in ttoy<digits> would be read as
+-- ours. Four letters rather than two is most of what makes that not worth
+-- guarding against -- the same looseness is in the tm pattern above, where it
+-- is deliberate.
+local function ScanToyMacro(macroID)
+  local body = GetMacroBody(macroID)
+  if not body then return end
+
+  for name in body:gmatch("/click[^\n]-(ttoy%d+)") do EnsureToy(name) end
+end
+
+-- A name edited out of every macro has to stop firing, and the frame cannot be
+-- destroyed -- nothing in the client destroys a frame. Emptying it is the same
+-- thing from the outside. Every button is emptied and the scan that follows
+-- fills back in only the names still spelled somewhere.
+--
+-- In combat it cannot be done at all, since SetAttribute is barred, so it is
+-- remembered instead. Skipping it outright would be the quiet kind of wrong: a
+-- /click line deleted during a fight would go on firing afterwards, with the
+-- macro in front of you no longer mentioning it.
+local toysStale = false
+
+local function DisarmToys()
+  if InCombatLockdown() then
+    toysStale = true
+    return
+  end
+
+  toysStale = false
+  wipe(toyArmed)
+  for _, btn in pairs(toys) do btn:SetAttribute("toy", nil) end
+end
+
+-- 150 GetMacroBody calls at worst, on the events in SCAN_TOYS below and nowhere
+-- else -- never on a button update, never on a modifier press.
+--
+-- Character macros do not follow the account ones: they start at a fixed
+-- offset, so the second loop counts from MAX_ACCOUNT_MACROS rather than from
+-- however many account macros happen to exist (Blizzard_MacroUI.lua,
+-- MacroFrameMixin:GetMacroDataIndex).
+local function ScanToys()
+  if InCombatLockdown() then return end
+
+  -- an edit the lockdown turned away, finished now
+  if toysStale then DisarmToys() end
+
+  local account, character = GetNumMacros()
+  for i = 1, account or 0 do ScanToyMacro(i) end
+  for i = 1, character or 0 do ScanToyMacro(MAX_ACCOUNT_MACROS + i) end
+end
+
+-- Leaving combat is emphatically not a rare event -- it is every pack in a
+-- dungeon, dozens of times a run -- so it is not in SCAN_TOYS, and a full scan
+-- on it would be thousands of GetMacroBody calls to find nothing new.
+--
+-- A fight can leave exactly one thing unfinished, and toysStale is the whole of
+-- it: an edit that arrived under the lockdown, where SetAttribute was barred.
+-- A new button cannot be outstanding, because the only way a macro gains a
+-- /click line is by being saved, and saving one draws UPDATE_MACROS -- which
+-- sets that same flag when it lands in a fight.
+local function ScanToysAfterCombat()
+  if toysStale then ScanToys() end
+end
+
+--------------------------------------------------------------------------------
 -- Icon
 --------------------------------------------------------------------------------
 
@@ -926,6 +1084,28 @@ local ARM_ONLY = {
   TOYS_UPDATED          = true,
 }
 
+-- The only moments the set of ttoy buttons can change, and the whole of what the
+-- Toy section costs. None of these arrive on a button update or a keypress, and
+-- a ttoy button appears nowhere else in this handler -- not in ARM_ONLY above,
+-- which is the loudest thing in the file, and not in the repaint pass below.
+--
+--   PLAYER_LOGIN           a session
+--   PLAYER_ENTERING_WORLD  the same session, asked a second time
+--   UPDATE_MACROS          an edit
+--
+-- PLAYER_ENTERING_WORLD is belt and braces, for the same reason it wipes the
+-- slot cache further down. Whether GetNumMacros can answer at PLAYER_LOGIN is
+-- the client's business and not worth betting on: if it cannot, the failure is
+-- a toy that silently does nothing until the next time a macro is saved.
+--
+-- PLAYER_REGEN_ENABLED is deliberately not in here -- see ScanToysAfterCombat,
+-- which is what answers it and why the full scan would be waste.
+local SCAN_TOYS = {
+  PLAYER_LOGIN          = true,
+  PLAYER_ENTERING_WORLD = true,
+  UPDATE_MACROS         = true,
+}
+
 f:SetScript("OnEvent", function(self, event, arg1)
   if ARM_ONLY[event] then
     for name in pairs(effects) do ArmEffect(name) end
@@ -996,6 +1176,9 @@ f:SetScript("OnEvent", function(self, event, arg1)
         if kind then btn:SetAttribute(kind, nil) end
       end
     end
+
+    -- the same emptying for the ttoy buttons, which the scan below fills back in
+    DisarmToys()
   end
 
   -- Belt and braces around the one way the cache could be wrong: a slot asked
@@ -1029,6 +1212,14 @@ f:SetScript("OnEvent", function(self, event, arg1)
       LAB.RegisterCallback(f, "OnButtonCreated", function(_, btn) Attach(btn) end)
       LAB.RegisterCallback(f, "OnButtonUpdate",  function(_, btn) OnButtonUpdate(btn) end)
     end
+  end
+
+  -- After the UPDATE_MACROS block above, not before it: that one empties every
+  -- ttoy button and the scan is what fills them back in.
+  if SCAN_TOYS[event] then
+    ScanToys()
+  elseif event == "PLAYER_REGEN_ENABLED" then
+    ScanToysAfterCombat()
   end
 
   RestyleAll()

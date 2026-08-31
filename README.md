@@ -182,6 +182,10 @@ sees the macro, so there is nothing to set up and no settings file.
 | `tms` | spell | a spell you know |
 | `tmi` | item | something that really sits in your bags |
 
+All three belong to the mount and are held back wherever it is — out of a `/mnt`
+macro they do nothing at all. For a toy that fires on its own terms, in any
+macro and in combat, see [A toy on its own](#a-toy-on-its-own).
+
 All lower case, and that is the only spelling — the name is looked up exactly as
 written, so `TMT140309` is a different button, and a button that does not exist
 does nothing at all.
@@ -300,6 +304,84 @@ to be things that ride off it.
 
 Extras fire whether or not the mount does, and they fire first, in the order
 they are written. If you need one without the other, use two keys.
+
+## A toy on its own
+
+Everything above serves a mount, and is held back wherever the mount is. If what
+you want is just the toy — in any macro, with nothing deciding on your behalf —
+that is a different name:
+
+```text
+/click ttoy140309
+```
+
+`ttoy`, then the id. No kind letter, because there is only one kind. It works in
+**any** macro: one that hearths, one that opens a profession, one that carries
+nothing else at all. TinyMount does not touch such a macro in any other way —
+the icon, the tooltip and the greying all stay exactly as your bar addon drew
+them. Only the button behind the name is ours.
+
+**It fires in combat.** On a boss, mid-pull, wherever. That is the whole point
+of the separate name, and it is why there are no checks on it:
+
+| | `/click tmt140309` | `/click ttoy140309` |
+| --- | --- | --- |
+| Needs a `/mnt` in the macro | yes | no |
+| In combat | held back | **fires** |
+| Mounted or in a vehicle | held back | **fires** |
+| On cooldown | held back, silently | fires, client complains |
+| Not yours | held back, silently | fires, client complains |
+| Spells and items too | yes — `tms`, `tmi` | toys only |
+
+The two bottom rows are the trade, and it is a deliberate one rather than a
+corner cut. Filtering a button means writing an attribute to it, and writing an
+attribute is forbidden in combat — so a filtered button freezes on whatever it
+held when the fight started. A toy that came off cooldown mid-fight would stay
+dead until the fight ended, and say nothing about why. A button nobody touches
+cannot be wrong that way.
+
+So on cooldown you get the client's own *not ready yet*, and it costs nothing
+else — a `/click` that fails does not stop the lines below it. If the noise
+bothers you, the addon already has an answer for exactly this:
+
+```text
+/tmq
+/click ttoy140309
+```
+
+### Conditionals on it
+
+`/click` is the client's own command and it reads its own conditionals before it
+ever looks the name up, so this needs nothing from TinyMount:
+
+```text
+/click [nostealth] ttoy140309
+```
+
+Write them out in full. The shorthand further down (`[m:cs]`, `[nmnt]`, `[sp:2]`)
+is expanded by `/mnt` and read by nothing else — including `/click`.
+
+### Where a `ttoy` button comes from
+
+TinyMount reads your macro list — all of it, account and character both — and
+builds a button for every `ttoy` name it finds on a `/click` line. It does that at
+login, across a loading screen, whenever you save a macro, and when you drop out
+of combat. Never while repainting a slot, so none of it is on the path your bars
+take when they redraw, and a `ttoy` button costs nothing at all while you play.
+
+The button is a frame and a frame's name is global, so a name only ever has to
+be spelled *somewhere* — once it exists, any macro can click it. Clicking a
+button that does not exist is not an error, so a misspelled name is completely
+silent: no red line, no sound, no hint the line was read. If a toy does nothing
+whatsoever, check the spelling first.
+
+Take the line out of every macro and the button stops firing — saving a macro
+empties them all, and the scan fills back in only the names still spelled
+somewhere.
+
+One gap, the same one everything else here has: a macro written *during* a fight
+gets its button when the fight ends. Creating a secure button is barred in
+combat and there is no way around that.
 
 ## Silencing a line
 
