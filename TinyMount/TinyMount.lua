@@ -723,8 +723,12 @@ local function ArmToy(name)
   -- The count is written last. It is the one PICK reads first, so until it lands
   -- the button rolls against the list it had before rather than a half-written
   -- one.
+  -- Nil rather than zero when there is nothing to roll against, because zero is
+  -- true in Lua and PICK would reach random(0) with it, which is an error inside
+  -- the snippet on every press. A name spelled ttoy:, is all it takes -- the scan
+  -- pattern accepts it, and both loops above then find no digits in it.
   for i = 1, n do btn:SetAttribute("t" .. i, kept[i]) end
-  btn:SetAttribute("n", n)
+  btn:SetAttribute("n", n > 0 and n or nil)
 end
 
 -- The toy box answering for the first time, or a toy learned. Neither reads a
