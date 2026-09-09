@@ -1,5 +1,75 @@
 # Release Notes
 
+## 1.6.0 — A handful of toys
+
+**`/click ttoy:<id>,<id>,…` fires one of them at random.**
+
+```text
+/click ttoy:54452,64488,93672,142542,162973,163045,165669,165670,165802,166746,166747,168907,172179,180290,182773,183716,184353,188952,190196,193588,200630,206195,208704,209035,212337,228940,235016,236687,245970,246565,257736,263489,263933,264367,265100
+```
+
+Thirty-five hearthstone toys in 253 characters. A macro holds 255, so that one is
+full.
+
+Every press rolls again, and it rolls **in combat** like the single-id form has
+since 1.5.0. That part is not obvious: choosing means writing to the button, and
+writing to a button is forbidden under a lockdown. So the roll is not made out
+here at all — it happens inside the click, in the client's own restricted
+environment, which is allowed to write where we are not.
+
+Which also means nothing in there can ask a question about the world, so every
+question about the list is asked out here and baked in. **Toys you do not own are
+dropped**, along with any your class cannot use, and the list is rebuilt whenever
+the game says your collection changed.
+
+**Cooldowns are deliberately not**, and the two are not the same kind of thing.
+What you own changes when you learn a toy, which cannot happen mid-fight. A
+cooldown changes every few seconds and changes most *during* a fight — exactly
+when the list is frozen and cannot be rewritten. Bake one in and a toy that came
+off cooldown mid-pull stays dead until the pull ends, silently. So a roll can
+still land on one that is not ready: the client says so, the press is spent,
+press again.
+
+The list is read from your macros exactly as a single id is — whole macro list,
+account and character, at login, across a loading screen, on saving a macro, and
+on leaving combat. Never while a slot repaints, so it still costs nothing at all
+while you play.
+
+**The client has `/userandom` and it is the wrong tool twice over.** It wants
+`item:` spelled in front of every id, which is five characters each: twenty toys
+comes to 250 of the 255 a macro holds, and the twenty-first does not fit. The
+same list as `ttoy:` is 151, and the ceiling is thirty-four. And it hands the
+roll off as a *spell* name rather than the item — `CastRandomManager.lua` fills
+an items table it then never reads — so a toy that lives in your collection and
+not your bags has nothing left to fire it.
+
+### `/tmq` keeps its hands to itself
+
+`/tmq` silences the same things it has silenced since 1.3.0. It now does it with
+the client's own switch, in place of two workarounds that should never have been
+needed.
+
+**The first one was the reason for this release.** TinyMount used to replace
+`UIErrorsFrame`'s own message function with one of its own, for the whole
+session. That is enough for the client to start naming this addon in errors
+raised somewhere else entirely: Cooldown Manager was reporting taint from
+TinyMount while nothing about mounts was on screen or in the stack.
+
+**The second was the spoken error**, which has no per-message switch — so it was
+turned off through the sound setting itself and put back a fraction of a second
+later. That is a real setting, written to disk. A `/reload` inside the window
+would have left it switched off, and a whole frame existed to catch that on the
+way out.
+
+Both are gone, replaced by the switch the client already keeps for exactly this.
+It is checked before the text is drawn and before the sound is played, so the
+red line, the spoken one and the plain error blip now stop together — the blip
+used to get through — and nothing of yours is changed to manage it.
+
+What this costs you: a complaint raised by a window you happen to have open —
+the auction house, the collections journal — is no longer caught by the window
+`/tmq` opens. Nothing on that list can fire from a macro press.
+
 ## 1.5.0 — A toy on its own
 
 Extras have always belonged to the mount. They ride on a `/click` line above

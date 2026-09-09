@@ -318,64 +318,59 @@ end
 -- client until the next reload. A window that closes itself has neither
 -- failure, and needs nothing written after the line it covers.
 --
--- Two halves, because the client keeps them apart:
+-- One switch, because the client keeps one. UIErrorsFrame is asked whether it
+-- is suppressed before it draws anything and before it plays anything, so the
+-- text, the voice line and the plain error blip all stop together
+-- (UIErrorsFrame.lua, TryDisplayMessage for UI_ERROR_MESSAGE and
+-- UI_INFO_MESSAGE, CheckAddMessage for SYSMSG). Nothing flickers: the message
+-- is dropped before the frame ever sees it, which clearing the frame afterwards
+-- would not manage -- there the text is already on screen and shows for a frame
+-- before it goes, and that is exactly what it looks like.
 --
---   * the text goes through UIErrorsFrame:AddMessage, so it can be dropped
---     before it is ever drawn -- the frame never sees it and nothing flickers.
---     Clearing the frame afterwards is the other way round: the message is
---     already on screen and shows for a frame before it goes, which is exactly
---     what it looks like.
+-- What the switch does not cover is a direct UIErrorsFrame:AddMessage, which
+-- the collection, auction and achievement windows use for their own complaints.
+-- Nothing on that list can fire from a macro press, so the window is the same
+-- width in practice as it ever was.
 --
---   * the voice has no per-message switch at all. Only the cvar, held down for
---     a fraction of a second and put back to whatever it was, so a player who
---     had turned it off keeps it off.
+-- Everything inside it goes, not only cooldowns: the line was written by hand,
+-- so the silence was asked for on purpose and for a known reason.
+--
+-- Two mechanisms used to be here instead, and both were the wrong shape.
+-- UIErrorsFrame.AddMessage was replaced outright, which leaves an addon's
+-- closure on a Blizzard frame's method for the whole session and taints every
+-- caller of it -- the client named this addon in Cooldown Manager errors that
+-- had nothing to do with mounts. The voice then needed a second mechanism of
+-- its own, the Sound_EnableErrorSpeech cvar, held down for a fraction of a
+-- second: a real setting, written to disk, which a /reload inside the window
+-- would have left switched off. A whole frame existed to put it back on
+-- PLAYER_LOGOUT. A flag in Lua dies with the reload and has nothing to restore.
+--
+-- Guarded, because this is a mixin method and not documented API: if it ever
+-- goes, /tmq stops silencing rather than erroring.
 local SILENCE_WINDOW = 0.3
 
--- The namespaced pair rather than the bare globals: those are deprecated
--- aliases, and they have been going away a function at a time for several
--- expansions now.
-local GetCVar, SetCVar = C_CVar.GetCVar, C_CVar.SetCVar
+local silenceUntil, silenced = 0, false
 
-local silenceUntil, savedSpeech = 0, nil
-
-local function RestoreSpeech()
+local function Unsilence()
   -- a second /tmq inside the window pushed the end back; come back then
   if GetTime() < silenceUntil then
-    C_Timer.After(silenceUntil - GetTime(), RestoreSpeech)
+    C_Timer.After(silenceUntil - GetTime(), Unsilence)
     return
   end
-  if savedSpeech then
-    SetCVar("Sound_EnableErrorSpeech", savedSpeech)
-    savedSpeech = nil
-  end
+  silenced = false
+  UIErrorsFrame:SetMessagesSuppressed(false)
 end
 
 SLASH_TINYMOUNTQUIET1 = "/tmq"
 SlashCmdList["TINYMOUNTQUIET"] = function()
-  if not savedSpeech then
-    savedSpeech = GetCVar("Sound_EnableErrorSpeech")
-    SetCVar("Sound_EnableErrorSpeech", "0")
-    C_Timer.After(SILENCE_WINDOW, RestoreSpeech)
+  if not UIErrorsFrame.SetMessagesSuppressed then return end
+
+  if not silenced then
+    silenced = true
+    UIErrorsFrame:SetMessagesSuppressed(true)
+    C_Timer.After(SILENCE_WINDOW, Unsilence)
   end
   silenceUntil = GetTime() + SILENCE_WINDOW
-end
-
--- A reload inside the window would take the timer with it and leave the setting
--- switched off until the next /tmq, so it is put back on the way out as well.
--- The event fires for a reload and a logout alike, and both are early enough:
--- cvars are written after it.
-local logoutFrame = CreateFrame("Frame")
-logoutFrame:RegisterEvent("PLAYER_LOGOUT")
-logoutFrame:SetScript("OnEvent", function()
-  if savedSpeech then SetCVar("Sound_EnableErrorSpeech", savedSpeech) end
-end)
-
--- Everything inside the window goes, not only cooldowns: the line was written
--- by hand, so the silence was asked for on purpose and for a known reason.
-local OrigAddMessage = UIErrorsFrame.AddMessage
-UIErrorsFrame.AddMessage = function(self, msg, ...)
-  if GetTime() < silenceUntil then return end
-  return OrigAddMessage(self, msg, ...)
 end
 
 --------------------------------------------------------------------------------
@@ -621,13 +616,125 @@ end
 --
 -- is decided before any of this runs. Full spellings only -- the shorthand in
 -- the Command section is expanded by /mnt and read by nothing else.
+--
+-- A colon and a list is the second spelling, and it fires one of them at random:
+--
+--   /click ttoy:140309,151016,163775
+--
+-- The client has its own command for this, /userandom, and it is the wrong tool
+-- twice over. It wants item: written out in front of every id, which is five
+-- characters each and runs a macro of twenty toys past the 255-character cap at
+-- the twentieth; this form holds thirty-four. And it hands the roll off as a
+-- spell name rather than the item -- CastRandomManager.lua fills an items table
+-- it then never reads -- so a toy that lives in the collection and not the bags
+-- has nothing left to fire it.
+--
+-- The roll cannot be made out here. It has to happen inside the click, in the
+-- client's restricted environment, or the button would freeze on whatever it
+-- last held when a fight started. See PICK below for how, and for what it costs.
 local MacroConsts = Constants and Constants.MacroConsts
 local MAX_ACCOUNT_MACROS = (MacroConsts and MacroConsts.MAX_ACCOUNT_MACROS) or 120
 
--- name -> button, and name -> the id last written to it. The second table is
+-- Run on every click of a list button, before the button's own handler reads
+-- the attribute it writes. This is the one place a choice may be made under a
+-- lockdown: SetAttribute is barred to us there and permitted here
+-- (RestrictedFrames.lua, HANDLE:SetAttribute), and random is one of the
+-- functions the environment exposes (RestrictedEnvironment.lua).
+--
+-- Returning nothing is deliberate. A pre-click body that returns false cancels
+-- the click, and anything else it returns is taken for the name of a mouse
+-- button (SecureHandlers.lua, Wrapped_Click), so the last statement here must
+-- be one that returns nothing at all.
+--
+-- What the environment cannot do is ask a single question about the world.
+-- Cooldowns, ownership, whether the toy box has even filled in -- none of it is
+-- reachable from in here, and no macro conditional stands in for any of it
+-- either (RestrictedEnvironment.lua, DIRECT_MACRO_CONDITIONAL_NAMES). So every
+-- question about the list has to be asked outside and baked in. ArmToy below is
+-- where that happens, and which questions may safely be asked out there is the
+-- whole of what it has to say.
+local PICK = [[
+local n = self:GetAttribute("n")
+self:SetAttribute("toy", n and self:GetAttribute("t" .. random(n)) or nil)
+]]
+
+-- name -> button, and name -> what was last written to it. The second table is
 -- what makes a repeat scan free: SetAttribute walks the attribute machinery
 -- whether or not the value differs, and the scan runs whole every time.
-local toys, toyArmed = {}, {}
+--
+-- The third holds the ids a list name spells, unfiltered and in order, so the
+-- filter below can be run again without reading a macro back.
+local toys, toyArmed, toySpelled = {}, {}, {}
+
+-- The list a name spells, minus what this character cannot use, written out for
+-- PICK to roll against.
+--
+-- Ownership is filtered here and cooldown is not, and the difference between
+-- those two is the whole reason one is safe to bake in and the other is not.
+--
+-- What you own changes when you learn a toy. The client announces that, and it
+-- does not happen in the middle of a fight -- so a list baked out of ownership
+-- is right until the announcement and rebuilt on it, which is what RearmToys is
+-- for. A cooldown changes every few seconds and changes most during a fight,
+-- which is exactly when the list is frozen and cannot be rewritten: bake that in
+-- and a toy that came off cooldown mid-fight stays dead until the fight ends,
+-- silently. That is the trade the single-id form refuses, and it is refused here
+-- for the same reason.
+--
+-- So a roll can still land on something on cooldown. It can no longer land on
+-- something you do not own, which is the half that was costing whole presses.
+--
+-- The single-id form is left alone on purpose: filtering one id leaves nothing,
+-- and a button that fires nothing at all says nothing at all. There the client's
+-- complaint is the only useful thing the press can produce.
+local function ArmToy(name)
+  local btn, ids = toys[name], toySpelled[name]
+  if not btn or not ids or InCombatLockdown() then return end
+
+  local kept, n = {}, 0
+  for one in ids:gmatch("%d+") do
+    if Have("toy", one) then
+      n = n + 1
+      kept[n] = one
+    end
+  end
+
+  -- Nothing kept means the toy box has not filled in yet far more often than it
+  -- means you own none of them: Have answers nil until it has, and this runs at
+  -- login well before that. Falling back to the whole list leaves the button
+  -- behaving exactly as it did before any filtering existed, and TOYS_UPDATED
+  -- comes along afterwards and narrows it.
+  if n == 0 then
+    for one in ids:gmatch("%d+") do
+      n = n + 1
+      kept[n] = one
+    end
+  end
+
+  -- Keyed on what is written rather than on what the macro spells, so the same
+  -- list narrowing later still reads as a change worth writing.
+  local key = table.concat(kept, ",")
+  if toyArmed[name] == key then return end
+  toyArmed[name] = key
+
+  -- A list that has lost entries leaves the ones above the new count behind,
+  -- unreachable: the roll never reaches past n.
+  --
+  -- The count is written last. It is the one PICK reads first, so until it lands
+  -- the button rolls against the list it had before rather than a half-written
+  -- one.
+  for i = 1, n do btn:SetAttribute("t" .. i, kept[i]) end
+  btn:SetAttribute("n", n)
+end
+
+-- The toy box answering for the first time, or a toy learned. Neither reads a
+-- macro back: the lists are already parsed and only the filter behind them has
+-- moved. Off TOYS_UPDATED alone -- the rest of ARM_ONLY is the cooldown storm,
+-- and nothing this asks about can change on one of those.
+local function RearmToys()
+  if InCombatLockdown() then return end
+  for name in pairs(toySpelled) do ArmToy(name) end
+end
 
 local function EnsureToy(name)
   -- CreateFrame and SetAttribute are both barred once the lockdown is up, so a
@@ -635,8 +742,9 @@ local function EnsureToy(name)
   -- ScanToysAfterCombat is what comes back for it.
   if InCombatLockdown() then return end
 
-  local id = name:match("^ttoy(%d+)$")
-  if not id then return end
+  local ids = name:match("^ttoy:([%d,]+)$")
+  local id = not ids and name:match("^ttoy(%d+)$")
+  if not ids and not id then return end
 
   local btn = toys[name]
   if not btn then
@@ -648,15 +756,26 @@ local function EnsureToy(name)
     -- nothing at all, silently
     btn:SetAttribute("useOnKeyDown", false)
     btn:SetAttribute("type", "toy")
+    -- The button is its own header, which SecureHandlerWrapScript allows only
+    -- for a frame that is explicitly protected -- SecureFrameTemplate is, and
+    -- SecureActionButtonTemplate inherits it (SecureTemplatesBase.xml). Hung
+    -- once at creation and never touched again, like everything else here.
+    if ids then SecureHandlerWrapScript(btn, "OnClick", btn, PICK) end
     toys[name] = btn
   end
 
-  if toyArmed[name] ~= id then
-    toyArmed[name] = id
-    -- the handler tonumber()s what it is given, so the digits go straight
-    -- through (SecureTemplates.lua, SECURE_ACTIONS.toy)
-    btn:SetAttribute("toy", id)
+  if id then
+    if toyArmed[name] ~= id then
+      toyArmed[name] = id
+      -- the handler tonumber()s what it is given, so the digits go straight
+      -- through (SecureTemplates.lua, SECURE_ACTIONS.toy)
+      btn:SetAttribute("toy", id)
+    end
+    return
   end
+
+  toySpelled[name] = ids
+  ArmToy(name)
 end
 
 -- Every macro the character has, account and character both, whether or not it
@@ -673,11 +792,16 @@ end
 -- ours. Four letters rather than two is most of what makes that not worth
 -- guarding against -- the same looseness is in the tm pattern above, where it
 -- is deliberate.
+--
+-- Two passes, because the two spellings cannot be told apart by one pattern and
+-- neither can match the other's lines: after ttoy the first wants a digit and
+-- finds a colon, the second wants a colon and finds a digit.
 local function ScanToyMacro(macroID)
   local body = GetMacroBody(macroID)
   if not body then return end
 
   for name in body:gmatch("/click[^\n]-(ttoy%d+)") do EnsureToy(name) end
+  for name in body:gmatch("/click[^\n]-(ttoy:[%d,]+)") do EnsureToy(name) end
 end
 
 -- A name edited out of every macro has to stop firing, and the frame cannot be
@@ -699,7 +823,16 @@ local function DisarmToys()
 
   toysStale = false
   wipe(toyArmed)
-  for _, btn in pairs(toys) do btn:SetAttribute("toy", nil) end
+  -- the parsed lists go with them: the scan that follows respells the ones still
+  -- written somewhere, and RearmToys must not go on filtering a name nothing does
+  wipe(toySpelled)
+  -- The count goes along with the id: a list button holds its choice in neither
+  -- of them until the click writes it, so clearing toy alone would leave the
+  -- snippet rolling against a list nothing spells any more.
+  for _, btn in pairs(toys) do
+    btn:SetAttribute("toy", nil)
+    btn:SetAttribute("n", nil)
+  end
 end
 
 -- 150 GetMacroBody calls at worst, on the events in SCAN_TOYS below and nowhere
@@ -1109,6 +1242,11 @@ local SCAN_TOYS = {
 f:SetScript("OnEvent", function(self, event, arg1)
   if ARM_ONLY[event] then
     for name in pairs(effects) do ArmEffect(name) end
+    -- Ownership is the only thing a ttoy list asks about, and this is the only
+    -- event in here that can move it. The other three are the cooldown storm, and
+    -- re-filtering on one of those would be thousands of questions a dungeon
+    -- whose answer cannot have changed.
+    if event == "TOYS_UPDATED" then RearmToys() end
     return
   end
 

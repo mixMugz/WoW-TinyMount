@@ -349,6 +349,56 @@ bothers you, the addon already has an answer for exactly this:
 /click ttoy140309
 ```
 
+### One of several, at random
+
+A colon and a list instead of a single id, and the press picks one:
+
+```text
+/click ttoy:54452,64488,93672,142542,162973,163045,165669,165670,165802,166746,166747,168907,172179,180290,182773,183716,184353,188952,190196,193588,200630,206195,208704,209035,212337,228940,235016,236687,245970,246565,257736,263489,263933,264367,265100
+```
+
+Thirty-five hearthstone toys in 253 characters. A macro holds 255, so that one is
+full — there is no room for a thirty-sixth.
+
+Every press rolls again, and it rolls **in combat** like the single-id form.
+
+**Toys you do not own are dropped from the list**, along with any your class
+cannot use, so the roll never wastes a press on one of those. That list is rebuilt
+whenever the game says your collection changed.
+
+**Cooldowns are not**, and the difference is worth a sentence. What you own
+changes when you learn a toy, which cannot happen mid-fight. A cooldown changes
+every few seconds and changes most *during* a fight — which is exactly when the
+list is frozen and cannot be rewritten. Bake a cooldown in and a toy that came
+off cooldown mid-pull would stay dead until the pull ended, silently. So a roll
+can still land on one that is not ready: the client says so, the press is spent,
+press again for a fresh roll.
+
+Nothing else changes. No icon, no tooltip, no greying, and the two spellings can
+sit in the same macro — they are separate buttons. So are `ttoy:111,222` and
+`ttoy:222,111`, which is harmless: both work, they simply cost two buttons
+instead of one.
+
+**Why not the client's own `/userandom`.** Because it makes you write `item:` in
+front of every id, and those five characters are the whole budget:
+
+| | 10 toys | 20 toys | Fits at most |
+| --- | --- | --- | --- |
+| `/userandom item:…` | 130 | 250 | 20 |
+| `/click ttoy:…` | 81 | 151 | 34 |
+
+A macro is capped at 255 characters, so twenty toys is where `/userandom` stops
+and this form is still only half full. It also hands the roll off as a *spell*
+name rather than the item, which leaves a toy that lives in your collection and
+not your bags with nothing to fire it.
+
+Those counts assume six-digit ids, which is what anything recent has. Older ones
+are five digits and buy you a character each — the example above fits thirty-five
+rather than thirty-four for exactly that reason.
+
+The cap is on the **whole macro**, not the line, so anything you put above it —
+`#showtooltip`, `/tmq`, another command — comes out of the same 255.
+
 ### Conditionals on it
 
 `/click` is the client's own command and it reads its own conditionals before it
@@ -400,18 +450,23 @@ The toy is off the global cooldown, so both lines go off. On the presses where
 it is still on cooldown you simply hear nothing about it, and the spell casts as
 usual.
 
-**One command, and no closing one.** `/tmq` covers the frame it is read in,
-which is the frame the error turns up in. There is nothing to switch back on
-afterwards — and so nothing that stays muted if you later edit the line away.
+**One command, and no closing one.** The complaint does not arrive in the frame
+the macro is read in — it comes off the event queue a moment later — so `/tmq`
+holds a short window open instead, a fraction of a second wide, and shuts it
+itself. A closing line could not do that job: it would be read in the same frame
+the opening one was, long before there was anything to catch, and one left
+behind by an edit would mute you until the next reload. There is nothing to
+switch back on afterwards — and so nothing that stays muted if you later edit
+the line away.
 
 Worth knowing:
 
-* it silences **everything** for that fraction of a second, not only cooldown
-  errors. You asked for it by hand, on a line whose failure you already
-  understand
-* the spoken error is a client setting with no per-message switch, so TinyMount
-  turns it off and puts it back to **whatever it was**. If you had error speech
-  off already, it stays off
+* it silences **everything** the game sends you for that fraction of a second,
+  not only cooldown errors. You asked for it by hand, on a line whose failure
+  you already understand
+* the sound goes with the text — the spoken line and the plain error blip both,
+  because the client stops all three at the same switch. Nothing of yours is
+  touched to do it: no setting is changed, so none can be left turned off
 * it changes nothing about what the macro does. A line that fails still fails,
   it just does so without an audience
 * you do not need it above a `/click` extra — those hold themselves back
