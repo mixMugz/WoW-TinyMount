@@ -666,6 +666,44 @@ self:SetAttribute("toy", n and self:GetAttribute("t" .. random(n)) or nil)
 -- filter below can be run again without reading a macro back.
 local toys, toyArmed, toySpelled = {}, {}, {}
 
+-- id -> true while the client is fetching that toy's item record for us, and
+-- the frame that hears it arrive. Registered only while something is
+-- outstanding: ITEM_DATA_LOAD_RESULT answers every item anything in the client
+-- asks for, and almost none of them are ours.
+local toyLoading = {}
+local toyLoad = CreateFrame("Frame")
+
+-- Whether a toy in a list is this character's: true, false, or nil when the
+-- client cannot say yet.
+--
+-- The third answer is the whole reason this is not Have. Have folds it into
+-- false, which is right for an extra -- the cooldown storm asks again within
+-- seconds -- and wrong for a list, which is asked again only on TOYS_UPDATED.
+-- At login most toys' item records are not in the cache yet and the toy
+-- questions answer falsy until they are. The one toy the client has already
+-- fetched answers true: the one named in a #showtooltip, which the bar loads
+-- for the icon. So the list baked down to that single toy, every press fired
+-- it, and it stayed that way until a macro was saved -- TOYS_UPDATED had come
+-- and gone long before the rest of the records arrived.
+--
+-- So an uncached toy is fetched, kept until it lands, and the list is rebuilt
+-- when it does.
+local function ToyOwned(id)
+  id = tonumber(id)
+  if not C_Item.IsItemDataCachedByID(id) then
+    if not toyLoading[id] then
+      toyLoading[id] = true
+      toyLoad:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+      C_Item.RequestLoadItemDataByID(id)
+    end
+    return nil
+  end
+
+  if not PlayerHasToy(id) then return false end
+  -- nil, not false, while the box is still filling in -- see Have
+  return C_ToyBox.IsToyUsable(id)
+end
+
 -- The list a name spells, minus what this character cannot use, written out for
 -- PICK to roll against.
 --
@@ -693,15 +731,18 @@ local function ArmToy(name)
 
   local kept, n = {}, 0
   for one in ids:gmatch("%d+") do
-    if Have("toy", one) then
+    -- Only a definite no drops a toy. An unanswered one stays, so until the
+    -- answer lands the list behaves exactly as it did before any filtering
+    -- existed -- and when it lands the list narrows.
+    if ToyOwned(one) ~= false then
       n = n + 1
       kept[n] = one
     end
   end
 
   -- Nothing kept means the toy box has not filled in yet far more often than it
-  -- means you own none of them: Have answers nil until it has, and this runs at
-  -- login well before that. Falling back to the whole list leaves the button
+  -- means you own none of them: PlayerHasToy has nothing to go on until it has,
+  -- and this runs at login well before that. Falling back to the whole list leaves the button
   -- behaving exactly as it did before any filtering existed, and TOYS_UPDATED
   -- comes along afterwards and narrows it.
   if n == 0 then
@@ -869,6 +910,31 @@ end
 local function ScanToysAfterCombat()
   if toysStale then ScanToys() end
 end
+
+-- A toy's item record arriving, which is what ToyOwned was waiting on.
+--
+-- Only a success rebuilds. A failed load is an id that is no item at all, and
+-- rebuilding would ask for it again and draw the same failure back, forever.
+-- It stays in the list unanswered, kept like everything else the client cannot
+-- vouch for, and is asked about again on the next rare event that rebuilds.
+--
+-- One rebuild per record rather than one when the last lands: a record that
+-- never answers would otherwise hold every list at its widest for the session.
+-- It happens once, seconds after login, over a few dozen ids.
+toyLoad:SetScript("OnEvent", function(self, _, itemID, success)
+  if not toyLoading[itemID] then return end
+  toyLoading[itemID] = nil
+  if not next(toyLoading) then self:UnregisterEvent("ITEM_DATA_LOAD_RESULT") end
+  if not success then return end
+
+  -- a fight that starts within seconds of login is unlikely, not impossible,
+  -- and RearmToys cannot write under the lockdown -- the scan after it can
+  if InCombatLockdown() then
+    toysStale = true
+  else
+    RearmToys()
+  end
+end)
 
 --------------------------------------------------------------------------------
 -- Icon
